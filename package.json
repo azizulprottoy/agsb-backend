@@ -1,0 +1,26 @@
+{
+  "name": "agsb-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start-dev": "nodemon index.js",
+    "seed:admin": "node src/scripts/seedAdmin.js",
+    "seed:content": "node src/scripts/seedContent.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "AGSB (Ami Ghurechi) backend API",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.6.1",
+    "multer": "^2.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

@@ -1,0 +1,15 @@
+const express = require('express');
+const membershipController = require('../controllers/membershipController');
+const { verifyToken, requireAdmin } = require('../middleware/auth');
+
+module.exports = (collections) => {
+  const router = express.Router();
+  const ctrl = membershipController(collections);
+
+  router.get('/membership-plans', ctrl.getMembershipPlans);
+  router.post('/membership-plans', verifyToken, requireAdmin, ctrl.addMembershipPlan);
+  router.put('/membership-plans/:id', verifyToken, requireAdmin, ctrl.editMembershipPlan);
+  router.delete('/membership-plans/:id', verifyToken, requireAdmin, ctrl.deleteMembershipPlan);
+
+  return router;
+};
