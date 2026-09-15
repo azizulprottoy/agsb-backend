@@ -27,6 +27,11 @@ async function connectDB() {
     MembershipPlanCollection: db.collection('membershipplans'),
     FrameCollection:         db.collection('frames'),
     ContactMessageCollection: db.collection('contactmessages'),
+    HotelCollection:         db.collection('hotels'),
+    TransportCollection:     db.collection('transports'),
+    GuideCollection:         db.collection('guides'),
+    DistrictAgentCollection: db.collection('districtagents'),
+    CheckpointCollection:    db.collection('checkpoints'),
   };
 }
 

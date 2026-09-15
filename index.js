@@ -21,6 +21,11 @@ const partnerRoutes = require('./src/routes/partnerRoutes');
 const membershipRoutes = require('./src/routes/membershipRoutes');
 const frameRoutes = require('./src/routes/frameRoutes');
 const contactRoutes = require('./src/routes/contactRoutes');
+const hotelRoutes = require('./src/routes/hotelRoutes');
+const transportRoutes = require('./src/routes/transportRoutes');
+const guideRoutes = require('./src/routes/guideRoutes');
+const districtAgentRoutes = require('./src/routes/districtAgentRoutes');
+const checkpointRoutes = require('./src/routes/checkpointRoutes');
 
 app.use(cors({
   origin: CORS_ORIGINS,
@@ -52,6 +57,11 @@ async function run() {
     app.use('/api', membershipRoutes(collections));
     app.use('/api', frameRoutes(collections));
     app.use('/api', contactRoutes(collections));
+    app.use('/api', hotelRoutes(collections));
+    app.use('/api', transportRoutes(collections));
+    app.use('/api', guideRoutes(collections));
+    app.use('/api', districtAgentRoutes(collections));
+    app.use('/api', checkpointRoutes(collections));
 
     app.listen(port, () => {
       console.log(`agsb-backend is running on port: ${port}`);

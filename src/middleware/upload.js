@@ -34,4 +34,8 @@ module.exports = {
   uploadPlan: fixedUploader('plans'),
   uploadPartner: fixedUploader('partners'),
   uploadFrame: fixedUploader('frames'),
+  uploadHotel: fixedUploader('hotels'),
+  uploadTransport: fixedUploader('transports'),
+  uploadGuide: fixedUploader('guides'),
+  uploadDistrictAgent: fixedUploader('districtagents'),
 };
