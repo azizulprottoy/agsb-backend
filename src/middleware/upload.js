@@ -38,4 +38,5 @@ module.exports = {
   uploadTransport: fixedUploader('transports'),
   uploadGuide: fixedUploader('guides'),
   uploadDistrictAgent: fixedUploader('districtagents'),
+  uploadRichText: fixedUploader('richtext'),
 };

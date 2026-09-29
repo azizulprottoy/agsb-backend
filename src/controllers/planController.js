@@ -24,6 +24,8 @@ const buildPlanData = (body) => ({
   districts: toArray(body.districts),
   cost: body.cost || '',
   highlights: toArray(body.highlights),
+  description_bn: body.description_bn || '',
+  description_en: body.description_en || '',
 });
 
 module.exports = ({ TravelPlanCollection }) => ({
