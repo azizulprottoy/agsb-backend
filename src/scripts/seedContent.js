@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { connectDB, client } = require('../config/db');
+const planDescriptions = require('./data/planDescriptions');
 
 const divisions = [
   { name_bn: "ঢাকা", name_en: "Dhaka", slug: "dhaka", color: "#4CAF50", districtCount: 13 },
@@ -135,8 +136,8 @@ const partners = [
 
 const membershipPlans = [
   { name: "Explorer", price: "Free", period: "", desc: "Start your 64-district journey", features: ["64-district badge tracker", "3 free frames/month (watermarked)", "Save trip plans", "Basic district guides", "Community access"], cta: "Sign Up Free", popular: false, order: 0 },
-  { name: "Premium", price: "৳199", period: "/month", desc: "For serious Bangladesh travellers", features: ["Everything in Explorer", "Unlimited HD frames (no watermark)", "Exclusive premium guides", "15% partner hotel discounts", "Priority custom plan support", "Early access to new districts", "64-district completion certificate"], cta: "Start Premium", popular: true, order: 1 },
-  { name: "Annual", price: "৳999", period: "/year", desc: "Best value — save ৳1,389", features: ["Everything in Premium", "2 months free", "Exclusive annual member badge", "Free custom travel plan (1x/year)", "20% partner discounts", "Featured traveller spotlight"], cta: "Go Annual", popular: false, order: 2 },
+  { name: "Premium", price: "৳199", period: "/month", desc: "For serious Bangladesh travellers", features: ["Everything in Explorer", "Unlimited HD frames (no watermark)", "Exclusive premium guides", "15% partner hotel discounts", "Early access to new districts", "64-district completion certificate"], cta: "Start Premium", popular: true, order: 1 },
+  { name: "Annual", price: "৳999", period: "/year", desc: "Best value — save ৳1,389", features: ["Everything in Premium", "2 months free", "Exclusive annual member badge", "20% partner discounts", "Featured traveller spotlight"], cta: "Go Annual", popular: false, order: 2 },
 ];
 
 async function seed() {
@@ -171,7 +172,12 @@ async function seed() {
   const blogDocs = blogPosts.map((b) => ({ ...b, content: b.excerpt }));
   const blogResult = await BlogCollection.insertMany(blogDocs);
 
-  const planResult = await TravelPlanCollection.insertMany(travelPlans);
+  const planDocs = travelPlans.map((p) => ({
+    ...p,
+    description_bn: planDescriptions[p.slug]?.bn.trim() || '',
+    description_en: planDescriptions[p.slug]?.en.trim() || '',
+  }));
+  const planResult = await TravelPlanCollection.insertMany(planDocs);
   const partnerResult = await PartnerCollection.insertMany(partners);
   const membershipResult = await MembershipPlanCollection.insertMany(membershipPlans);
 

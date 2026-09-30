@@ -15,6 +15,28 @@ const toArray = (val) => {
   return [];
 };
 
+const PLAN_STATUSES = ['open', 'full', 'closed', 'completed', 'cancelled'];
+
+const toPrice = (val) => {
+  if (val === undefined || val === null || val === '') return null;
+  const n = Number(val);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+};
+
+const toSeats = (val) => {
+  if (val === undefined || val === null || val === '') return null;
+  const n = Number(val);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+// Returns an error message, or null when the schedule fields are valid.
+const validateSchedule = (plan) => {
+  if (plan.start_date && plan.end_date && plan.end_date < plan.start_date) {
+    return 'End date cannot be before start date';
+  }
+  return null;
+};
+
 const buildPlanData = (body) => ({
   title_bn: body.title_bn,
   title_en: body.title_en,
@@ -23,9 +45,14 @@ const buildPlanData = (body) => ({
   type: body.type || '',
   districts: toArray(body.districts),
   cost: body.cost || '',
+  price: toPrice(body.price),
   highlights: toArray(body.highlights),
   description_bn: body.description_bn || '',
   description_en: body.description_en || '',
+  start_date: body.start_date || '',
+  end_date: body.end_date || '',
+  seats_available: toSeats(body.seats_available),
+  status: PLAN_STATUSES.includes(body.status) ? body.status : 'open',
 });
 
 module.exports = ({ TravelPlanCollection }) => ({
@@ -45,6 +72,10 @@ module.exports = ({ TravelPlanCollection }) => ({
   addPlan: async (req, res) => {
     try {
       const newPlan = buildPlanData(req.body);
+      const scheduleError = validateSchedule(newPlan);
+      if (scheduleError) {
+        return res.status(400).json({ success: false, message: scheduleError });
+      }
       newPlan.image = req.file ? `/uploads/plans/${req.file.filename}` : '';
 
       const result = await TravelPlanCollection.insertOne(newPlan);
@@ -59,6 +90,10 @@ module.exports = ({ TravelPlanCollection }) => ({
     try {
       const { id } = req.params;
       const updatedData = buildPlanData(req.body);
+      const scheduleError = validateSchedule(updatedData);
+      if (scheduleError) {
+        return res.status(400).json({ success: false, message: scheduleError });
+      }
       if (req.file) {
         updatedData.image = `/uploads/plans/${req.file.filename}`;
       }

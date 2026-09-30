@@ -32,6 +32,8 @@ async function connectDB() {
     GuideCollection:         db.collection('guides'),
     DistrictAgentCollection: db.collection('districtagents'),
     CheckpointCollection:    db.collection('checkpoints'),
+    BookingCollection:       db.collection('bookings'),
+    PaymentMethodCollection: db.collection('paymentmethods'),
   };
 }
 
