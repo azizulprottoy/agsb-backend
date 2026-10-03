@@ -4,480 +4,150 @@
 **Branch:** `stage` (all three repos)
 **Scope:** `agsb-backend` (Express + MongoDB), `agsb-admin` (React admin panel), `agsb` (React public site)
 
-## How this was produced
 
-1. **Code review** of every file in all three repos, cross-checking frontend API calls against backend routes and controllers. Lint and build were run for both frontends.
-2. **Runtime testing.** A separate stage backend (port 5002, MongoDB database `agsb_stage`) was filled with realistic data by driving the **real admin panel UI** in a headless browser. The public-site flows were then tested end to end: signup, booking, payment submission, contact form, profile check-ins, and the admin's handling of bookings and messages. The real `agsb` database was not touched.
+# Second audit (after fixes 1-56)
 
-**Verified** column:
-- **Runtime**: reproduced in the running app.
-- **Code**: confirmed by reading the code, not reproduced.
-
-Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `WEB` = agsb.
-
----
-
-## Critical
-
-### 1.-done Admin cannot add Districts, Partners or Frames
-- **Where:** `AD` src/Layout/Districts/Districts.jsx:100, 213 · src/Layout/Partners/Partners.jsx:72, 123 · src/Layout/Frames/Frames.jsx:70, 89
-- **Severity / Verified:** Critical / Runtime
-- **Problem:** `const Form = (...) => ...` is defined *inside* the page component and rendered as `<Form/>`. Each state change creates a new component type, so React remounts the whole form. The remount empties the `required` file input right after a file is chosen; the preview still shows the image.
-- **Effect:** Submit is blocked with "Please select a file". None of these three entity types can be created through the UI.
-- **Fix:** Move `Form` to module scope and pass `form`, `setForm` and `file` as props. Alternatively, call it as a function (`{Form({...})}`), as `Blog.jsx` and `Plans.jsx` already do.
+**Date:** 2026-10-03. Code review of all three repos, focused on regressions from the fix commits plus anything missed the first time. The admin app was also exercised in Chromium against a mocked API. Lint and build pass in both frontends.
 
 ## High
 
-### 2.-done Admin inputs lose focus after every keystroke (10 pages)
-- **Where:** `AD` Divisions.jsx:58, Districts.jsx:100, Partners.jsx:72, Frames.jsx:70, Membership.jsx:65, Hotels.jsx:93, Transport.jsx:79, Guides.jsx:102, DistrictAgents.jsx:74, Checkpoints.jsx:82 (all under src/Layout/<Name>/)
-- **Severity / Verified:** High / Runtime
-- **Problem:** Same root cause as #1. Typing "Abc" leaves only "A", and focus jumps to `<body>`.
-- **Effect:** Every add or edit form on these pages needs a click back into the field after each character, which makes data entry painfully slow.
-- **Fix:** Same as #1. Blog, Plans and PaymentMethods are not affected.
-
-### 3.-done Site cannot be deployed: API URLs and CORS are hard-coded to localhost
-- **Where:** `BE` src/config/constants.js:3-9 · `AD` src/config/config.js:1 · `WEB` src/lib/config.js:1
-- **Severity / Verified:** High / Code
+### 57.-done Seats can still be held without paying (#6 is bypassable)
+- **Where:** `BE` bookingController.js:163-169 (caps count only `paymentStatus: 'unpaid'`), :309-320 (`submitPayment` unsets `holdExpiresAt`), :87-91 (sweep expires only `unpaid`), :357-379 (`updatePaymentStatus` never sets a new hold)
+- **Verified:** Code
 - **Problem:**
-  - The backend CORS allow-list contains only `localhost` / `127.0.0.1` origins.
-  - The admin API URL is hard-coded to `http://localhost:5001/api`.
-  - The site falls back to that same URL when `VITE_API_BASE_URL` is missing, and the repo has no `.env`.
-  - The backend `.env.example` uses port 5000, but both frontends expect 5001.
-- **Effect:** Any deployed frontend is blocked by CORS or calls localhost, so every page renders empty. A fresh dev setup that follows `.env.example` cannot reach the API either.
-- **Fix:**
-  - Backend: read `CORS_ORIGINS` from env as a comma-separated list and drop `credentials: true`, which isn't needed for Bearer auth.
-  - Both frontends: use `import.meta.env.VITE_API_URL` and fail the build when it is missing.
-  - Add `.env.example` files to both frontends and align the port.
-
-### 4.-done One database error can crash the whole API
-- **Where:** `BE` the list and by-slug handlers in almost every controller, e.g. blogController.js:17, 22 · districtController.js:33, 38 · planController.js:59, 64 · bookingController.js:138, 143, 212 · contactController.js:30, plus the `getX` handlers of division, frame, guide, hotel, partner, transport, checkpoint, districtAgent, membership and paymentMethod
-- **Severity / Verified:** High / Code
-- **Problem:** These async handlers have no try/catch. Express 4 does not forward rejected promises to its error handling. On Node 24, an unhandled rejection terminates the process.
-- **Effect:** A brief MongoDB hiccup during `GET /api/plans` takes the whole API down until it is restarted manually.
-- **Fix:** Wrap the handlers in an `asyncHandler` (or upgrade to Express 5). Add a final JSON error middleware and a `process.on('unhandledRejection')` logger, and run under a process manager.
-
-### 5.-done Login can be probed with NoSQL injection, reveals which emails exist, and has no rate limit
-- **Where:** `BE` src/controllers/authController.js:14, 50, 96
-- **Severity / Verified:** High / Code
-- **Problem:**
-  - `email` from the request body goes straight into `findOne({ email })` with no type check, so `{"$regex":"^a"}` is accepted.
-  - Login answers **404 "Admin not found" / "User not found"** for an unknown email and **401 "Invalid password"** for a wrong password.
-  - There is no rate limiting.
-- **Effect:** An attacker can recover the admin email character by character, then brute-force the password.
-- **Fix:**
-  - Reject a non-string `email`, then trim and lowercase it.
-  - Return a single generic `401 Invalid credentials` for both cases.
-  - Add `express-rate-limit` to `/api/auth/*`.
-
-### 6.-done Seats can be hoarded with unpaid bookings
-- **Where:** `BE` src/controllers/bookingController.js:79-91, 97-121
-- **Severity / Verified:** High / Code
-- **Problem:** Seats are deducted as soon as a booking is created. Unpaid bookings never expire, and there is no per-user limit.
-- **Effect:** Anyone can sign up for free and book 10 tickets at a time until a plan shows "Fully booked", without paying. Runtime testing confirmed that a 2-seat plan flips to full immediately on an unpaid booking.
-- **Fix:**
-  - Store an expiry on unpaid holds and release their seats with a scheduled sweep (or sweep before each booking).
-  - Cap pending bookings and tickets per user per plan.
-
-### 7.-done Admin can cancel a booking, or downgrade a payment, by mis-clicking a dropdown
-- **Where:** `AD` src/Layout/Bookings/Bookings.jsx:96 (payment status), :102 (booking status)
-- **Severity / Verified:** High / Runtime
-- **Problem:** Changing either `<select>` fires the PATCH immediately, with no confirmation.
-- **Effect:**
-  - Choosing "Cancelled" cancels at once and releases the seats (16 → 17 in testing). The select then becomes disabled, and the backend refuses to reopen the booking, so the cancellation is permanent.
-  - Changing payment from `paid_full` to `unpaid` resets `paidAmount` to 0.
-- **Fix:** Ask for confirmation before cancelling and before any payment downgrade.
-
-### 8.-done Public site still shows the user as logged in after their token becomes invalid
-- **Where:** `WEB` src/context/AuthContext.jsx:37-41
-- **Severity / Verified:** High / Runtime
-- **Problem:** When the start-up `/profile` check fails, the token is removed from storage but `setUser(null)` is never called. The same catch also logs the user out on *any* error, including network errors and 500s.
-- **Effect:**
-  - With an expired token, the navbar still shows the profile avatar and protected booking pages still open. Every member API call then fails with "No token provided", and the user sees "Booking not found" or "No bookings yet".
-  - Separately, a brief backend outage at page load logs the user out.
-- **Fix:** Call `setUser(null)` in the catch, but only clear the session on a 401. Have `apiGet` attach `res.status` to the error it throws.
-
-### 9.-done Neither frontend handles 401 / expired tokens mid-session
-- **Where:** `WEB` src/lib/api.js:26-44 · `AD` src/utils/api.js:8-26, src/Provider/AuthProvider.jsx:11-27
-- **Severity / Verified:** High / Code
-- **Problem:** Neither app checks for a 401 after start-up.
-  - **Admin:** the token's `exp` is checked only on mount and no logout timer is set (admin tokens last 12 h). The 401 branch of `authFetch` clears storage but leaves `user` in context.
-  - **Site:** the user is never redirected to `/login`.
-- **Effect:** After the token expires, deletes, status changes and member pages fail silently or show misleading errors.
-- **Fix:** Use one fetch helper per app. On a 401: clear auth, update context, and redirect to `/login` (on the site, pass `state.from`). On the admin, also schedule `logout` at `exp`.
-
-### 10.-done Public site can white-screen on missing or malformed data
-- **Where:** `WEB` src/App.jsx (no error boundary), plus these unguarded accesses:
-
-  | File:line | Access |
-  |---|---|
-  | DistrictDetailPage.jsx:20 | `p.districts.includes` |
-  | DistrictDetailPage.jsx:66 | `district.attractions.map` |
-  | DistrictDetailPage.jsx:87 | `district.food.map` |
-  | MapPage.jsx:153 | `selected.attractions.slice` |
-  | HomePage.jsx:151 | `p.districts.join` |
-  | PlansPage.jsx:32 | `p.districts.join` |
-  | PlansPage.jsx:44 | `p.highlights.map` |
-  | DistrictsPage.jsx:17 | `d.name_en.toLowerCase()` |
-  | CheckoutPage.jsx:74 | `booking.travellers.map` |
-
-- **Severity / Verified:** High / Code
-- **Problem:** The backend's `parseJsonField` can return a non-array, and older or hand-edited documents may lack these fields.
-- **Effect:** Any single bad record blanks the entire app.
-- **Fix:** Add a route-level `ErrorBoundary`, and guard these accesses with `?.` and `|| []`.
-
-### 11.-done File uploads have no type or size restriction and are served from the API origin
-- **Where:** `BE` src/middleware/upload.js:13-28 · index.js:49
-- **Severity / Verified:** High / Code
-- **Problem:** There is no multer `fileFilter` and no `limits`. The file extension is taken from the uploaded filename, and `express.static` serves the files from the API origin.
-- **Effect:**
-  - An `.html` or `.svg` uploaded through an admin token (for example via `/api/uploadrichtextimage`) is served as an active page on the API origin, which is stored XSS.
-  - A multi-GB upload can fill the disk.
-- **Fix:**
-  - Allow only jpeg/png/webp/gif, by both MIME type and extension, and derive the extension from the detected type.
-  - Set `limits: { fileSize: 5 * 1024 * 1024, files: 1 }`.
-  - Serve `/uploads` with `X-Content-Type-Options: nosniff`.
+  - After payment submission a booking is `pending_verification`: no expiry, and it no longer counts toward `MAX_UNPAID_PER_PLAN` / `MAX_UNPAID_TOTAL`.
+  - The TrxID check accepts any 6-30 letters/digits.
+  - When the admin rejects (`failed`) or resets to `unpaid`, the booking stays `pending` with its seats and no `holdExpiresAt`, so the sweep never releases it.
+  - The cap checks are count-then-insert, so parallel requests can all pass.
+- **Effect:** One free account can loop "book 10 seats, submit fake TrxID" and fill any plan in minutes. Rejected bookings hold their seats until cancelled by hand.
+- **Fix:** Count `unpaid`, `pending_verification` and `failed` pending bookings toward both caps. When the admin sets `failed` or `unpaid`, set a fresh `holdExpiresAt` and let the sweep expire `failed` as well as `unpaid` (or cancel automatically on reject).
 
 ## Medium
 
-### 12.-done Edit (PUT) endpoints rebuild the entire document
-- **Where:** `BE` the `buildXData` function used by every `editX`, e.g. planController.js:40-56, blogController.js:4-14, districtController.js:14-30, hotelController.js:14-24, membershipController.js:33-43
-- **Severity / Verified:** Medium / Code. It did **not** reproduce through the admin UI, because the admin forms always send every field.
-- **Problem:** Any field missing from the request body becomes `null` or goes back to its default.
-- **Effect:** A partial update from another client or a future form can:
-  - reopen a full, closed or cancelled trip (`status` resets to `'open'`);
-  - remove the seat cap (`seats_available` becomes `null`);
-  - re-date a blog post to today.
-- **Fix:** For PUT, build `$set` only from the fields that are present (as `profileController` already does), or validate the full payload and return 400.
+### 58.-done Editing a plan overwrites the live seat count
+- **Where:** `BE` planController.js:57, 88, 104 · `AD` Plans.jsx:33, 62-71
+- **Verified:** Code
+- **Problem:** `seats_available` is decremented atomically by bookings, but the admin edit form sends back the value it loaded and the edit `$set`s it.
+- **Effect:** Seats booked while the form was open are given back, so the plan oversells. Adding seats to a `full` plan leaves it `full` (unbookable). Switching from unlimited to limited seats ignores existing bookings.
+- **Fix:** Write `seats_available` only when the admin changed it (send the loaded value and apply the difference with `$inc`), and set `full` back to `open` when seats go above 0.
 
-### 13.-done Bad IDs return 500, and missing records return success
-- **Where:** `BE` every edit/delete `new ObjectId(req.params.id)` (e.g. blogController.js:51, 61), every `new ObjectId(body.district_id …)`, and the guide `district_ids.map`
-- **Severity / Verified:** Medium / Code
-- **Effect:**
-  - `PUT /api/hotels/abc` returns 500.
-  - Updating a deleted record still returns "updated successfully".
-  - Deletes return the raw `DeleteResult`.
-- **Fix:** Validate IDs with `ObjectId.isValid` and return 400. Check `matchedCount` / `deletedCount` and return 404. Ensure array fields really are arrays.
+### 59.-done Users can pay after their seat hold has expired
+- **Where:** `WEB` src/lib/booking.js:46-61 (`canPay`, `isHoldExpired`, `holdDeadline`), PaymentPage.jsx:27-28, 88, CheckoutPage.jsx:91, 154-156
+- **Verified:** Code
+- **Problem:** The site treats a booking as expired only once the backend sweep has cancelled it (`cancelReason === 'expired'`); it never compares `holdExpiresAt` with the current time, and the pay page is never refetched. The sweep runs every 5 minutes.
+- **Effect:** A user who sends bKash money after the deadline gets 409 "Your seat hold expired", the booking is cancelled, and the money has already been sent. The page still says "Complete payment by <past time>".
+- **Fix:** Treat `holdExpiresAt < now` as expired on the client, show a live countdown, refetch on window focus, and reload the booking on a 409.
 
-### 14.-done No database indexes, so nothing is actually unique
-- **Where:** `BE` src/config/db.js (no `createIndex` anywhere) · authController.js:50-68 · src/utils/refCode.js:11-16 · bookingController.js:179
-- **Severity / Verified:** Medium / Code
-- **Problem:** Uniqueness is enforced only by find-then-insert, which can race. Lookups are full collection scans.
-- **Effect:**
-  - Two simultaneous signups can create duplicate accounts.
-  - A duplicate slug makes `/plans/:slug` (or `/districts/:slug`, `/blog/:slug`) return an arbitrary record.
-  - Duplicate booking reference codes or transaction IDs are possible.
-- **Fix:**
-  - At startup, create unique indexes on: `users.email`, `admins.email`, `slug` (divisions, districts, travelplans, blogposts), and `bookings.referenceCode`.
-  - Add a unique partial index on `bookings.payment.transactionId`, and a regular index on `bookings.userId`.
-  - Catch duplicate-key error 11000 and return 409.
-  - In the admin forms, validate slugs with `pattern="[a-z0-9-]+"` and auto-generate them from the English name.
+### 60.-done Premium frames are locked only in the browser
+- **Where:** `WEB` FramesPage.jsx:14-17, 78, 138 · `BE` frameController.js:11-14
+- **Verified:** Code
+- **Problem:** `GET /frames` is public and returns every frame's full image URL, and the card renders it. The lock is only a button redirect, and `hasPremium` reads `user.plan` from localStorage.
+- **Effect:** Anyone can save premium frames with right-click, or by editing `plan` in localStorage.
+- **Fix:** Return only a watermarked or low-res preview for premium frames from the public endpoint, and serve the original from an authenticated endpoint that checks the plan in the database.
 
-### 15.-done Email addresses are case-sensitive
-- **Where:** `BE` authController.js · `WEB` src/pages/SignupPage.jsx:18-35, LoginPage.jsx:16-25
-- **Severity / Verified:** Medium / Code
-- **Effect:** `User@x.com` and `user@x.com` become two separate accounts, and logging in with a different casing fails.
-- **Fix:** Trim and lowercase the email on both client and server, and back it with the unique index from #14.
+### 61.-done Rate limits treat every visitor as one IP behind a reverse proxy
+- **Where:** `BE` src/middleware/rateLimit.js:17 · index.js (no `trust proxy`) · authRoutes.js:7-9 · contactRoutes.js:7
+- **Verified:** Code
+- **Problem:** Behind nginx or a PaaS router `req.ip` is the proxy's address. Successful logins also count toward the limit.
+- **Effect:** 10 logins in 15 minutes from anyone returns 429 for every user and for admin login; same for signup (5/hour) and contact (5/10 min). Mobile-carrier CGNAT causes a milder version without a proxy.
+- **Fix:** Set `trust proxy` from a `TRUST_PROXY` env var (hop count or subnet, never `true`), document it in `.env.example`, and don't count successful logins.
 
-### 16.-done No global error handler or 404 handler, so HTML stack traces leak
-- **Where:** `BE` index.js
-- **Severity / Verified:** Medium / Code
-- **Problem:** `NODE_ENV` is never set. Malformed JSON, or a multer `LIMIT_UNEXPECTED_FILE`, falls through to Express's default handler.
-- **Effect:** The response is an HTML stack trace that includes server paths. Frontends that expect JSON break on it (see #30).
-- **Fix:** Add a JSON error middleware and a JSON 404 handler, and set `NODE_ENV=production` in deployment.
-
-### 17.-done Contact form can be spammed and accepts double submits
-- **Where:** `BE` src/controllers/contactController.js:4-28 · `WEB` src/pages/ContactPage.jsx:13-22
-- **Severity / Verified:** Medium / Code
-- **Problem:**
-  - Backend: no rate limit, no type or length checks, and the phone number is not validated.
-  - Site: no submitting state.
-- **Effect:**
-  - A script can flood the admin inbox, and `GET /contact` returns every message unpaginated.
-  - A double click creates duplicate messages.
-- **Fix:**
-  - Backend: add a rate limit, coerce fields with `String()`, cap their lengths, and validate the phone with the existing `BD_PHONE` regex.
-  - Site: disable the submit button while the request is in flight.
-
-### 18.-done Cancelling a booking twice releases its seats twice
-- **Where:** `BE` bookingController.js:253-265
-- **Severity / Verified:** Medium / Code
-- **Problem:** Cancellation reads the booking, updates it without a condition, then releases the seats.
-- **Effect:** Two concurrent cancels (a double click, or two admins) push seat inventory above capacity.
-- **Fix:** Update with `{ _id, bookingStatus: { $ne: 'cancelled' } }`, and release seats only when `modifiedCount === 1`.
-
-### 19.-done No pagination anywhere
-- **Where:** `BE` every `find().toArray()` (notably userController.js:4, bookingController.js:213, contactController.js:31) · `AD` every list page
-- **Severity / Verified:** Medium / Code
-- **Effect:** As the data grows, admin pages load entire collections into memory, and the responses carry every user's personal data at once. There is also no search.
-- **Fix:** Add `?page=&limit=` with a maximum, use projections, and add pagination and search to the admin lists.
-
-### 20.-done Rich-text HTML is stored unsanitized and executed inside the admin editor
-- **Where:** `AD` src/components/RichTextEditor.jsx:47-120 · `BE` blogController.js:10, planController.js:50-51
-- **Severity / Verified:** Medium / Code
-- **Problem:** The backend stores HTML as-is. The editor writes it with `doc.write` into an unsandboxed `about:blank` iframe, which shares the admin panel's origin. (The public site is safe: it sanitizes with DOMPurify.)
-- **Effect:** A post containing `<img src=x onerror=...>` runs code when any admin opens Edit, and that code can read `localStorage.adminToken`.
-- **Fix:** Sanitize on the server (e.g. `sanitize-html`) and run DOMPurify before writing into the editor.
-
-### 21.-done Admin pages crash on a 403/500 or when the backend is down
-- **Where:** `AD` src/routes/Routes.jsx:23-34, 36-161 · Users.jsx:4 · Contact.jsx:9 · Divisions.jsx:10 · Membership.jsx:12
-- **Severity / Verified:** Medium / Code
-- **Problem:** There is no `errorElement` and no catch-all route. Loaders pass error JSON straight to the page.
-- **Effect:** The page shows React Router's "Unexpected Application Error", or crashes with `rows.map is not a function`.
-- **Fix:** Add an `errorElement` and a 404 route, throw on `!res.ok`, and guard with `Array.isArray`, as Bookings and PaymentMethods already do.
-
-### 22.-done Admin actions fail silently
-- **Where:** `AD` src/utils/api.js:8-26 · every `handleDelete` (e.g. Divisions.jsx:52, Contact.jsx:23) · Contact.jsx:12-17
-- **Severity / Verified:** Medium / Code
-- **Problem:** `res.ok` is never checked, and `res.json()` runs without a try/catch. Handlers only act on success and have no `else` branch.
-- **Effect:** A failed delete or status change shows nothing, so the admin assumes it worked.
-- **Fix:** Use a central fetch helper that returns or throws `{success:false, message}`, and show a toast on every failure.
-
-### 23.-done Double-clicking a submit button creates duplicate records
-- **Where:** `AD` every submit button (e.g. Divisions.jsx:75, Blog.jsx:138) · `WEB` the Signup, Login and Contact forms
-- **Severity / Verified:** Medium / Code
-- **Effect:** Duplicate divisions, posts, messages and so on, and the backend has no unique indexes to stop them (#14).
-- **Fix:** Add a `submitting` state that disables the button while the request is in flight.
-
-### 24.-done Free signup gets the paid "Explorer" plan
-- **Where:** `BE` authController.js:63 (`plan: 'Explorer'`)
-- **Severity / Verified:** Medium / Runtime. After "Sign Up Free", the admin Users page shows the plan as Explorer (the ৳199 tier).
-- **Fix:** Default new users to the Free plan.
-
-### 25.-done District `trip_type` is never saved
-- **Where:** `BE` districtController.js:14-30 · `AD` Districts form (no field) · `WEB` HomePage.jsx:91, DistrictsPage.jsx:83
-- **Severity / Verified:** Medium / Runtime. All 13 test districts have no `trip_type`, so the home and district cards show an empty badge.
-- **Fix:** Add a `trip_type` field to the admin form and include it in `buildDistrictData`.
-
-### 26.-done Frames page ignores admin-uploaded frames
-- **Where:** `WEB` src/pages/FramesPage.jsx:8, 53
-- **Severity / Verified:** Medium / Runtime
-- **Problem:** The page fetches `/districts` and shows district photos, all labelled "Free". The download buttons have no handler, and the price "৳199/mo" is hard-coded.
-- **Effect:** None of the 3 frames created in admin (2 of them premium) appear on the site.
-- **Fix:** Read from `GET /api/frames` and add a real download link.
-
-### 27.-done Map is clipped on mobile
-- **Where:** `WEB` src/pages/MapPage.jsx:32-34
-- **Severity / Verified:** Medium / Runtime
-- **Problem:** At a 390 px viewport, the SVG renders 558 px wide at x = -84, inside a container with `overflow-hidden`. `100vh` also ignores the mobile URL bar.
-- **Effect:** Sylhet, Chattogram, Cox's Bazar, Bandarban, Rangamati and the north-west are cut off, with no way to pan or zoom.
-- **Fix:** Fit the map with `max-width: 100%; height: auto`, use `dvh`, and consider pinch-zoom.
-
-### 28.-done Profile check-ins can be lost or toggled by accident
-- **Where:** `WEB` src/pages/ProfilePage.jsx:63-66, 156-163
-- **Severity / Verified:** Medium / Code
-- **Problem:** `toggleDistrict` builds the next list from the current render's state, doesn't `await` the save, and has no catch. A single tap toggles a district immediately.
-- **Effect:**
-  - Two quick clicks send two PATCHes, and the second overwrites the first.
-  - Failures are never shown.
-  - Scrolling the map on a phone toggles districts by accident.
-- **Fix:** Use a functional update (or server-side `$addToSet` / `$pull`), disable clicks while a save is in flight, show errors, and require a tap then confirm on touch.
-
-### 29.-done Public pages have no loading, error or empty states
-- **Where:** `WEB`
-  - Ignore `loading` and `error`: HomePage.jsx:11-14, BlogPage.jsx:8, PlansPage.jsx:9, PartnersPage.jsx:7, MembershipPage.jsx:6, FramesPage.jsx:8, MapPage.jsx:12, ProfilePage.jsx:213.
-  - Render blank while loading: BlogDetailPage.jsx:12, DistrictDetailPage.jsx:16, PlanDetailPage.jsx:21, CheckoutPage.jsx:36, PaymentPage.jsx:21, BookingPage.jsx:34.
-- **Severity / Verified:** Medium / Code
-- **Effect:** When the backend is down, users see headings over empty grids, or "No bookings yet" when the request actually failed.
-- **Fix:** Add shared `Spinner`, `ErrorState` and `EmptyState` components and use them on every page.
-
-### 30.-done Site shows raw parse errors when the server returns HTML
-- **Where:** `WEB` src/lib/api.js:28, 39
-- **Severity / Verified:** Medium / Code
-- **Problem:** `res.json()` is called on every response, whatever its type.
-- **Effect:** An Express "Cannot GET" page or a proxy's 502 page reaches the user as "Unexpected token '<'…".
-- **Fix:** Check the `content-type` header, or wrap the parse in a try/catch and fall back to `res.statusText`.
-
-### 31.-done Dead buttons and placeholder links on the public site
-- **Where:** `WEB`
-  - MembershipPage.jsx:34: plan buttons have no handler, and the page lists SSLCommerz, which isn't supported.
-  - PlansPage.jsx:51: the "Save" button does nothing.
-  - Navbar.jsx:53: the globe button does nothing.
-  - Footer.jsx:21-24, 58, 61 · ContactPage.jsx:82, 90, 94 · DistrictDetailPage.jsx:123: `href="#"` and `tel:+8801XXXXXXXXX`; the footer shows "+880 1XXX-XXXXXX".
-- **Severity / Verified:** Medium / Runtime (placeholders seen on every page)
-- **Effect:** "WhatsApp us" and the "Join" buttons do nothing.
-- **Fix:** Wire up or hide these controls, and move the real contact links into config.
-
-### 32.-done SEO and hosting gaps
-- **Where:** `WEB` index.html:6-7 · the whole app
-- **Severity / Verified:** Medium / Code
-- **Problem:**
-  - Every route shares one `<title>` and description.
-  - There are no Open Graph or Twitter tags, no canonical URL, no `robots.txt` and no `sitemap.xml`.
-  - There is no SPA rewrite config for the host.
-- **Effect:** District, blog and plan pages are indexed as duplicates, social shares show no preview, and reloading `/districts/sylhet` on static hosting returns 404.
-- **Fix:**
-  - Set a per-page `<title>` and `<meta>` (React 19 supports these natively), add OG tags, robots.txt and a sitemap.
-  - Add a rewrite to `index.html` for the chosen host.
-  - Consider prerendering the detail pages.
-
-### 33.-done Admin panel is unusable on mobile
-- **Where:** `AD` src/Layout/Sidebar/Sidebar.jsx:53 · the forms
-- **Severity / Verified:** Medium / Code
-- **Problem:** The sidebar is a fixed `w-64`, and the forms use fixed `grid-cols-2` / `grid-cols-3` layouts.
-- **Effect:** On a phone, content gets about 120 px of width.
-- **Fix:** Turn the sidebar into a drawer below `md`, and use `grid-cols-1 sm:grid-cols-2` in the forms.
-
-### 34.-done Hard-coded statistics don't match the real data
-- **Where:** `WEB` HomePage.jsx:53-58 · src/data/index.js · DistrictsPage.jsx:49
-- **Severity / Verified:** Medium / Runtime
-- **Problem:** The home page shows "640+ attractions / 120+ plans / 10,000+ members", and the district filter shows "All (64)" and "Dhaka (13)", while stage has 5 plans and 13 districts.
-- **Fix:** Compute these numbers from the API.
-
-### 35.-done Large single-chunk bundles and repeated full-list fetches
-- **Where:** `WEB` src/App.jsx:5-23 (396 KB JS, one chunk) · `AD` (483 KB, one chunk) · `WEB` DistrictDetailPage.jsx:11-14, HomePage.jsx:11-14, BlogDetailPage.jsx:10
-- **Severity / Verified:** Medium / Code (build output)
-- **Problem:** Neither app uses code splitting. Each detail page re-downloads the full `/districts`, `/plans` and `/divisions` lists.
-- **Fix:**
-  - Lazy-load routes with `React.lazy` + `Suspense`.
-  - Add a shared data cache (context or SWR/React Query), or have the backend return the related data with each record.
+### 62.-done A failed database connection at startup does not exit with an error
+- **Where:** `BE` index.js:167-169
+- **Verified:** Code
+- **Problem:** `run()` catches the startup error and only logs it.
+- **Effect:** If MongoDB is unreachable at boot nothing listens and the process exits with code 0, so supervisors that restart on failure leave the API down.
+- **Fix:** `process.exit(1)` in that catch.
 
 ## Low
 
-### 36.-done JWT weaknesses
-- **Where:** `BE` src/middleware/auth.js:13-18 · authController.js:24-27, 133-135
-- **Problem:**
-  - Tokens can't be revoked (admin 12 h, user 7 d).
-  - `/auth/me` returns the token's possibly stale data instead of reading the database.
-  - There is no startup check for `JWT_SECRET` (or `MONGO_URI`).
-  - Both apps store tokens in `localStorage`.
-- **Fix:**
-  - Fail fast at boot when the config is missing.
-  - Add a `tokenVersion` field to support revocation.
-  - Have `/me` read from the database.
-  - Add a CSP; longer term, move tokens to httpOnly cookies.
+### 63.-done Admin payment update can confirm a booking the sweep just cancelled
+- **Where:** `BE` bookingController.js:365-379
+- **Verified:** Code
+- **Problem:** `updatePaymentStatus` reads the booking, then writes with an unconditional `updateOne({ _id })` that may set `bookingStatus: 'confirmed'`.
+- **Effect:** If the hold expires at the same moment, the sweep releases the seats and the admin's write re-confirms the booking, so the plan oversells.
+- **Fix:** Include the read `bookingStatus` (or `{ $ne: 'cancelled' }` when confirming) in the filter and return 409 when nothing was modified.
 
-### 37.-done Admin route guard is weak
-- **Where:** `AD` src/Layout/Main.jsx:12-27 · src/Layout/Auth/Login.jsx
-- **Problem:**
-  - The guard renders `<Outlet/>` before its redirect effect runs.
-  - It accepts any decodable JWT without checking `role`.
-  - The login page doesn't redirect a user who is already logged in, and has no loading state.
-- **Fix:** Return `<Navigate to="/login">` when there is no user, and check `user.role === 'admin'`. The server still enforces auth, so this is defense in depth.
+### 64.-done Booking status check and seat reservation use different rules
+- **Where:** `BE` bookingController.js:149 vs. :67/178
+- **Verified:** Code
+- **Problem:** The pre-check uses `(plan.status || 'open') !== 'open'`; the reservation uses `{ $in: ['open', null] }`.
+- **Effect:** For a legacy plan with `status: ''`, or one closed between read and update, the user gets a wrong "Only N seats left" / "fully booked" message.
+- **Fix:** Use one rule in both places and re-check status before choosing the failure message.
 
-### 38.-done Booking reference code is generated outside the seat rollback
-- **Where:** `BE` bookingController.js:98 vs. 124-129
-- **Effect:** A database error at that step leaves seats reserved with no booking.
-- **Fix:** Generate the code before reserving seats, or move it inside the try block that releases them.
+### 65.-done Re-running seedAdmin does not revoke admin sessions
+- **Where:** `BE` src/scripts/seedAdmin.js:19-23
+- **Verified:** Code
+- **Problem:** A password reset `$set`s the hash but doesn't bump `tokenVersion`, so a stolen admin token stays valid up to 12 h. The upsert filter has no collation, so a differently capitalised `ADMIN_EMAIL` tries to insert a duplicate and fails on the unique index.
+- **Fix:** Add `$inc: { tokenVersion: 1 }` and `collation: { locale: 'en', strength: 2 }`.
 
-### 39.-done Plans with no `status` field can never be booked
-- **Where:** `BE` bookingController.js:71 vs. 82
-- **Problem:** The pre-check treats a missing `status` as `open`, but the reservation filter requires `status: 'open'` exactly.
-- **Fix:** Use `status: { $in: ['open', null] }`, or backfill the field.
+### 66.-done `toPublicUrl` cuts external URLs that contain "/uploads"
+- **Where:** `BE` src/utils/paths.js:4-5 (used by every GET and crud.js:36, 56)
+- **Verified:** Code
+- **Problem:** `https://cdn.example.com/wp-content/uploads/x.jpg` becomes `/uploads/x.jpg`.
+- **Effect:** Broken image; on edit/delete `removeUpload` may delete an unrelated local file with the same name (still inside `uploads/`).
+- **Fix:** Leave `http(s)://` values untouched.
 
-### 40.-done Bookings are accepted for trips that have already started
-- **Where:** `BE` bookingController.js:69
-- **Problem:** Past `start_date` values are not rejected, and `planSlug` is not type-checked.
-- **Fix:** Reject past start dates and coerce the slug with `String(planSlug)`.
+### 67.-done Check-ins on districts outside the 64 map slugs break the profile tracker
+- **Where:** `WEB` DistrictDetailPage.jsx:218-226, ProfilePage.jsx:62-65, 106, 184-186, MapPage.jsx:54 · `BE` districtController.js:10
+- **Verified:** Code
+- **Problem:** `CheckIn` saves whatever slug the district has. The profile count uses `visited.length` but the badges and map only show slugs in `ALL_DISTRICTS` (which keeps the old `chittagong` / `comilla` slugs). The backend doesn't validate district slugs.
+- **Effect:** A district created with slug `chattogram` has no marker; its check-in counts but never shows, and the count can reach 65/64. A slug with capitals or spaces fails every check-in with 400.
+- **Fix:** Count only known slugs, hide `CheckIn` for unknown slugs, and validate district slugs on the backend (`/^[a-z0-9-]{1,60}$/`).
 
-### 41.-done Weak signup and profile validation
-- **Where:** `BE` authController.js:42-55 · profileController.js:20-33
-- **Problem:**
-  - Signup has no email format check and no minimum password length on the server; the 6-character rule is client-only.
-  - Name and phone accept any type, and `visitedDistricts` accepts any shape or size.
-  - An admin token on `PATCH /profile` returns 500.
-- **Fix:** Validate types and formats, require a password of at least 8 characters, cap `visitedDistricts`, and return 404 when no user is found.
+### 68.-done Trips that have already started still show "Booking open"
+- **Where:** `WEB` src/lib/planSchedule.js:9-16 (used by PlanDetailPage.jsx:67, 150 and BookingPage.jsx:55)
+- **Verified:** Code
+- **Problem:** `isBookable` / `planStatus` ignore `start_date`, but the backend now rejects started trips (#40).
+- **Effect:** The user fills in up to 10 traveller forms, then gets 409 "This trip has already started".
+- **Fix:** Treat a `start_date` before today (Dhaka time) as closed, matching the backend's `hasStarted`.
 
-### 42.-done Contact status accepts any value
-- **Where:** `BE` contactController.js:38-40
-- **Problem:** Any value is accepted, and an unknown ID never returns 404. The admin sends `new`, `read` and `resolved`.
-- **Fix:** Whitelist `['new', 'read', 'resolved']` and return 404 when no message matches.
+### 69.-done Startup profile refresh can overwrite a fresh check-in
+- **Where:** `WEB` src/context/AuthContext.jsx:33-38
+- **Verified:** Code
+- **Problem:** The startup `GET /profile` calls `setUser` unconditionally when it resolves.
+- **Effect:** On a slow network a check-in made before it returns disappears from the UI, and the next toggle builds on the stale list so the server loses it too.
+- **Fix:** Ignore the startup response if `updateUser` ran since it was sent, or merge instead of replace.
 
-### 43.-done Inactive payment methods are publicly listed
-- **Where:** `BE` paymentMethodController.js:13
-- **Problem:** `GET /payment-methods?all=1` is public and includes inactive methods.
-- **Fix:** Move the full list to an admin-only route.
+### 70.-done `?division=` filter shows "no districts found" while divisions load
+- **Where:** `WEB` DistrictsPage.jsx:26, 33-37, 86-93
+- **Verified:** Code
+- **Problem:** Filtering needs the divisions list, but only the districts request's loading/error state is used.
+- **Effect:** `/districts?division=sylhet` shows "0 districts found" until divisions load, and permanently if that request fails.
+- **Fix:** Include the divisions request in the loading and error state when a division filter is active.
 
-### 44.-done Uploaded files are never deleted
-- **Where:** `BE` every `deleteX` controller, every `editX` that replaces an image, and planController.js:76 (the upload is kept even when validation returns 400)
-- **Verified:** Runtime. Deleted records' images stay on disk.
-- **Fix:** On delete or replace, `fs.unlink` the old file (after checking the resolved path is inside `uploads/`), and delete `req.file` when a request fails validation.
+### 71.-done Admin lists don't refresh when the current page is clicked in the sidebar
+- **Where:** `AD` every CRUD page's `useState(() => asArray(initial))` (e.g. Divisions.jsx:15, Plans.jsx:43), usePagedList.js:38
+- **Verified:** Runtime (mocked API)
+- **Problem:** React Router re-runs the loader on a same-route navigation but the page keeps its old state.
+- **Effect:** New bookings or edits made elsewhere don't appear until a full reload.
+- **Fix:** Key the page on `location.key`, or sync state when `useLoaderData()` changes.
 
-### 45.-done Deletes don't check what references the record
-- **Where:** `BE` deleteDistrict, deleteDivision, deletePlan
-- **Effect:**
-  - Hotels, guides, agents, checkpoints and transports keep pointing at a deleted district.
-  - Bookings keep pointing at a deleted plan, and cancelling them later releases no seats.
-- **Fix:** Block the delete while references exist, or switch to soft-delete.
+### 72.-done Esc closes admin forms without asking
+- **Where:** `AD` src/components/Modal.jsx:24-28
+- **Verified:** Runtime (mocked API)
+- **Problem:** Esc closes Add/Edit forms with no "discard changes?" prompt, even while saving. Keydown inside the editor iframe doesn't reach the dialog, so Esc works inconsistently.
+- **Effect:** An admin can lose a long blog or plan draft.
+- **Fix:** Confirm before closing a dirty form and ignore Esc while submitting; optionally forward Esc from the editor iframe.
 
-### 46.-done Edit responses are incomplete
-- **Where:** `BE` every `editX` response (e.g. hotelController.js:54)
-- **Problem:** When no new file is uploaded, the returned object has no `image` key, and its `_id` is a string.
-- **Fix:** Return the document from `findOneAndUpdate({ returnDocument: 'after' })`.
+### 73.-done Membership features containing a comma are split on every edit
+- **Where:** `AD` Membership.jsx:12, 33 · `BE` membershipController.js:7-9
+- **Verified:** Code
+- **Problem:** Features are joined with `", "` for editing and split on `","` when saved.
+- **Effect:** "Up to ৳1,000 discount" becomes "Up to ৳1" and "000 discount".
+- **Fix:** Edit one feature per line (split on `\n`) or as an array field like Plans' highlights.
 
-### 47.-done Content seed script wipes collections without a guard
-- **Where:** `BE` src/scripts/seedContent.js:153-160
-- **Problem:** It runs `deleteMany({})` on 6 collections with no environment check, and the seeded plans have no `price`, `status` or `seats_available`, so they can't be booked.
-- **Fix:** Require a `--force` flag, refuse to run when `NODE_ENV=production`, and seed the booking fields.
+### 74.-done Rich-text toolbar can't be used from the keyboard
+- **Where:** `AD` RichTextEditor.jsx:455-457 (`Btn`), 557-558, 565-566, 576-577
+- **Verified:** Code
+- **Problem:** Toolbar buttons only handle `onMouseDown`; Enter/Space fire `click`, which has no handler.
+- **Fix:** Add `onClick` running the command, keeping `onMouseDown={(e) => e.preventDefault()}` to preserve the selection.
 
-### 48.-done Admin edit forms can save the literal string "undefined"
-- **Where:** `AD` Partners.jsx:27, Frames.jsx:25, and `toFormState` in Districts, Hotels, Transport and DistrictAgents
-- **Problem:** The row is spread into form state without defaults.
-- **Effect:** For any record missing a field, the string `"undefined"` is sent in the FormData and stored.
-- **Fix:** Merge with the empty form first: `{ ...empty, ...row }`, as Blog does.
-
-### 49.-done Rich-text editor problems
-- **Where:** `AD` src/components/RichTextEditor.jsx:288-289, 399
-- **Problem:**
-  - An inserted image can't be removed with Backspace or Delete (seen at runtime).
-  - `injectResizer` runs twice, and StrictMode doubles it again, which can draw duplicate resize handles.
-  - Image upload failures are only logged to the console.
-- **Fix:** Handle deleting a selected image, run the setup once, and show upload errors to the admin.
-
-### 50.-done Admin memory leak and stale-closure bugs
-- **Where:** `AD` src/components/FileInput.jsx:15, 33 · Contact.jsx:15
-- **Problem:**
-  - `URL.createObjectURL` runs on every render and is never revoked; the remounting in #1 makes this worse.
-  - `setRows(rows.map(...))` runs after an `await`, so two quick status changes lose one of them.
-- **Fix:** Create the object URL in `useMemo` / `useEffect` and revoke it in cleanup. Use the functional form `setRows(prev => ...)`.
-
-### 51.-done Admin uses `apiSend` for GET requests
-- **Where:** `AD` every `refresh()`
-- **Problem:** `apiSend` adds a `Content-Type` header, which forces a CORS preflight and triggers the lint warning. On error the list is set to `[]`, so it silently empties.
-- **Fix:** Use `apiGet` and show the error instead of clearing the list.
-
-### 52.-done Accessibility gaps in both frontends
-- **Where:**
-  - `AD`: labels have no `htmlFor` / `id`. `Modal.jsx` has no `role="dialog"`, no Esc to close, no focus trap, and an unlabelled × button. Sidebar.jsx:71 removes the focus outline. Action cells use `<td className="flex">`.
-  - `WEB`: icon-only buttons have no `aria-label` (Navbar.jsx:59, 68 · Footer.jsx:21-24); the menu toggle has no `aria-expanded`; map districts are clickable `<g>` elements with no role, `tabIndex` or keyboard handler (MapPage.jsx:52-58, ProfilePage.jsx:156).
-- **Fix:** Add labels and roles, make the map markers keyboard-operable, and offer a list fallback for the map.
-
-### 53.-done Smaller public-site bugs
-- **Where:** `WEB`
-- **Problems:**
-  - `useFetch.js:9-20`: when the path changes, the previous page's data or error shows for one render.
-  - `DistrictsPage.jsx:11`: the division filter isn't kept in the URL, so back/forward and shared links lose it.
-  - `DistrictsPage.jsx:71-73`: the internal status (`skeleton` / `good` / `complete`) is shown to the public.
-  - `DistrictDetailPage.jsx:144-145`: "Login to check in" links to `/membership` and is shown to logged-in users too.
-  - `App.jsx:66`: the 404 page uses `<a href="/">`, which reloads the whole app.
-  - `Navbar.jsx:41`: the active-link check is exact, so `/districts/x` doesn't highlight "Districts".
-  - `ProfilePage.jsx:21, 32-56`: a new `[]` on every render re-parses the SVG each time.
-  - `api.js:5-9`: `resolveImage` returns `''` for a record with no image, giving `<img src="">` (not exercised at runtime, because every test record had an image).
-  - Map labels use old spellings (Bogra, Chittagong, Barisal, Shatkhira, Maulvibazar) while the data uses the new ones (runtime).
-  - After payment submit, the spinner stays up for more than 2 s even though the backend has already saved the payment (runtime).
-- **Fix:** Fix each of these individually.
-
-### 54.-done Images are not optimized
-- **Where:** `WEB` card and hero images (Home, Plans, Frames, detail pages)
-- **Problem:** No `loading="lazy"`, and no `width` / `height`, which causes layout shift. Unsplash URLs are fixed at `?w=600`, even for full-width heroes.
-- **Fix:** Add `loading="lazy"` and explicit dimensions, and use `srcset`.
-
-### 55.-done Minor admin UI issues
-- **Where:** `AD` Contact.jsx:45 · src/components/ConfirmDelete.js
-- **Problem:** The `createdAt` date is shown as a raw ISO string, and the SweetAlert dialog uses a dark theme inside the light daisyUI theme.
-- **Fix:** Format the date, and match the dialog theme to the app.
-
-### 56.-done Dead code, unused dependencies and maintainability
-- **Where:** all three repos
-- **Problem:**
-  - **Site:** `leaflet` / `react-leaflet` are installed but never used; `public/assets/BD_Map_admin.svg` (102 KB) ships but is unused; 8 unused imports are flagged by lint; `TOKEN_KEY` is exported but unused.
-  - **Admin:** `react-icons` is unused; `apiGet` and the `token` value in context are never read.
-  - **Backend:**
-    - `parseJsonField` is copy-pasted into 4 controllers.
-    - There is no `helmet`, so `X-Powered-By` is exposed.
-    - There is no graceful shutdown.
-    - `.DS_Store` and `.sf/` are committed.
-    - `.vscode/tasks.json` auto-runs `node index.js` when the folder is opened.
-- **Fix:** Remove the unused code and dependencies, add `helmet`, and gitignore the editor and OS files.
+### 75.-done Login errors aren't announced to screen readers
+- **Where:** `AD` src/Layout/Auth/Login.jsx:88
+- **Verified:** Code
+- **Problem:** The error alert has no `role="alert"` / `aria-live`.
+- **Fix:** Add `role="alert"` and reference it from the inputs with `aria-describedby`.
 
 ---
 

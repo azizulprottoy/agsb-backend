@@ -70,6 +70,7 @@ const validateVisitedDistricts = (list) => {
 module.exports = {
   MIN_PASSWORD_LENGTH,
   MAX_VISITED_DISTRICTS,
+  DISTRICT_SLUG,
   validateName,
   validateEmail,
   validateNewPassword,

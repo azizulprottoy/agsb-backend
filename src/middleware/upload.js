@@ -38,20 +38,19 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-const fixedUploader = (...subdirs) => {
-  const dirPath = path.join(rootDir, 'uploads', ...subdirs);
-  return multer({
-    storage: multer.diskStorage({
-      destination: (req, file, cb) => {
-        ensureDir(dirPath);
-        cb(null, dirPath);
-      },
-      filename,
-    }),
-    fileFilter,
-    limits: { fileSize: MAX_FILE_SIZE, files: 1 },
-  });
-};
+const uploaderFor = (dirPath) => multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      ensureDir(dirPath);
+      cb(null, dirPath);
+    },
+    filename,
+  }),
+  fileFilter,
+  limits: { fileSize: MAX_FILE_SIZE, files: 1 },
+});
+
+const fixedUploader = (...subdirs) => uploaderFor(path.join(rootDir, 'uploads', ...subdirs));
 
 module.exports = {
   ensureDir,
@@ -60,7 +59,9 @@ module.exports = {
   uploadBlog: fixedUploader('blog'),
   uploadPlan: fixedUploader('plans'),
   uploadPartner: fixedUploader('partners'),
-  uploadFrame: fixedUploader('frames'),
+  // Frames land in the private folder first; frameController publishes free
+  // ones and keeps premium originals private (see utils/frameFiles.js).
+  uploadFrame: uploaderFor(path.join(rootDir, 'private-uploads', 'frames')),
   uploadHotel: fixedUploader('hotels'),
   uploadTransport: fixedUploader('transports'),
   uploadGuide: fixedUploader('guides'),

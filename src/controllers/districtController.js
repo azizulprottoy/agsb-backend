@@ -2,12 +2,25 @@ const { toPublicUrl } = require('../utils/paths');
 const { optionalRefId } = require('../utils/ids');
 const { pickPresent, insertResponse, updateById, deleteById, assertUnreferenced } = require('../utils/crud');
 const { parseJsonField } = require('../utils/json');
+const { httpError } = require('../utils/http');
+const { DISTRICT_SLUG } = require('../utils/authValidation');
+
+// Slugs end up in URLs and in users' visitedDistricts (which the profile API
+// validates with the same pattern), so anything else would break check-ins.
+const districtSlug = (val) => {
+  if (val === undefined) return undefined;
+  const slug = String(val).trim().toLowerCase();
+  if (!DISTRICT_SLUG.test(slug)) {
+    throw httpError(400, 'Slug must be 1-60 characters: lowercase letters, digits and hyphens only');
+  }
+  return slug;
+};
 
 const buildDistrictData = (body) => ({
   division_id: optionalRefId(body.division_id, 'division_id'),
   name_bn: body.name_bn,
   name_en: body.name_en,
-  slug: body.slug,
+  slug: districtSlug(body.slug),
   tagline: body.tagline || '',
   trip_type: String(body.trip_type || '').trim().slice(0, 40),
   best_time: body.best_time || '',
@@ -71,6 +84,7 @@ module.exports = (collections) => {
 
     addDistrict: async (req, res) => {
       const newDistrict = buildDistrictData(req.body);
+      if (!newDistrict.slug) throw httpError(400, 'Slug is required');
       newDistrict.image = req.file ? `/uploads/districts/${req.file.filename}` : '';
 
       const result = await DistrictCollection.insertOne(newDistrict);

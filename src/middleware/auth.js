@@ -60,4 +60,9 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { verifyToken, requireAdmin, initAuth };
+// verifyToken when an Authorization header is sent, otherwise continue
+// anonymously (req.user stays unset). For endpoints that are public but give
+// signed-in users more.
+const optionalAuth = (req, res, next) => (req.headers.authorization ? verifyToken(req, res, next) : next());
+
+module.exports = { verifyToken, optionalAuth, requireAdmin, initAuth };

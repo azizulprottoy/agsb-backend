@@ -1,6 +1,8 @@
 // Startup configuration check. Run before anything reads these variables so a
 // misconfigured deploy fails at boot with a clear message instead of at the
 // first login (missing secret) or first query (missing database URI).
+const { parseTrustProxy } = require('./trustProxy');
+
 const MIN_JWT_SECRET_LENGTH = 32;
 
 // Returns a list of problems; an empty list means the config is usable.
@@ -14,6 +16,11 @@ const checkConfig = (env = process.env) => {
   }
   if (!(env.MONGO_URI || '').trim()) {
     errors.push('MONGO_URI is not set');
+  }
+  try {
+    parseTrustProxy(env.TRUST_PROXY);
+  } catch (err) {
+    errors.push(err.message);
   }
   return errors;
 };

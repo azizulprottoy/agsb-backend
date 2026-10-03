@@ -16,10 +16,18 @@ async function seedAdmin() {
 
   const passwordHash = await bcrypt.hash(password, 10);
 
+  // Case-insensitive match (same collation as the unique email index), so a
+  // differently capitalised ADMIN_EMAIL resets the existing admin instead of
+  // failing to insert a duplicate. Bumping tokenVersion logs out every
+  // session issued before the reset.
   const result = await AdminCollection.updateOne(
     { email },
-    { $set: { name, email, passwordHash, role: 'admin' } },
-    { upsert: true }
+    {
+      $set: { name, passwordHash, role: 'admin' },
+      $setOnInsert: { email },
+      $inc: { tokenVersion: 1 },
+    },
+    { upsert: true, collation: { locale: 'en', strength: 2 } }
   );
 
   console.log(

@@ -101,7 +101,39 @@ module.exports = ({ TravelPlanCollection, BookingCollection }) => ({
       updatedData.image = `/uploads/plans/${req.file.filename}`;
     }
 
-    const updatedPlan = await updateById(TravelPlanCollection, req.params.id, updatedData, 'Travel plan');
+    // seats_available is a live counter that bookings decrement. When the
+    // admin form also sends the value it loaded (seats_available_was), apply
+    // only the admin's change as an increment, so seats booked while the form
+    // was open are not handed out again. Without it (older clients), or when
+    // switching between limited and unlimited, the value is set as sent.
+    if ('seats_available' in updatedData && req.body.seats_available_was !== undefined) {
+      const was = toSeats(req.body.seats_available_was);
+      const next = updatedData.seats_available;
+      if (was === next) {
+        delete updatedData.seats_available;
+      } else if (was !== null && next !== null) {
+        delete updatedData.seats_available;
+        const delta = next - was;
+        const adjusted = await TravelPlanCollection.updateOne(
+          { _id: requireId(req.params.id), seats_available: { $type: 'number', $gte: Math.max(0, -delta) } },
+          { $inc: { seats_available: delta } }
+        );
+        if (!adjusted.matchedCount) {
+          throw httpError(409, 'Seats were booked while you were editing, so this change would go below zero. Reload the plan and try again.');
+        }
+      }
+    }
+
+    const { _id } = await updateById(TravelPlanCollection, req.params.id, updatedData, 'Travel plan');
+
+    // Keep status in step with the seat count: a full plan that has seats
+    // again reopens, an open plan with none left becomes full.
+    await TravelPlanCollection.updateOne({ _id, status: 'full', seats_available: { $gt: 0 } }, { $set: { status: 'open' } });
+    await TravelPlanCollection.updateOne({ _id, status: { $in: ['open', null, ''] }, seats_available: 0 }, { $set: { status: 'full' } });
+
+    // Re-read: the seat increment and status fix are not in updateById's result.
+    const fresh = await TravelPlanCollection.findOne({ _id });
+    const updatedPlan = { ...fresh, image: toPublicUrl(fresh.image) };
     res.json({ success: true, message: 'Travel plan updated successfully', updatedPlan });
   },
 

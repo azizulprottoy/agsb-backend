@@ -63,8 +63,21 @@ const hasStarted = (plan) => {
   return /^\d{4}-\d{2}-\d{2}$/.test(start) && start < todayInDhaka();
 };
 
-// Plans created before `status` existed have none; treat that as open.
-const OPEN_STATUS = { $in: ['open', null] };
+// Plans created before `status` existed have none (or ''); treat that as open.
+// isOpen and OPEN_STATUS must agree: one is the pre-check, the other the
+// condition of the atomic seat reservation.
+const OPEN_STATUS = { $in: ['open', null, ''] };
+const isOpen = (plan) => plan.status == null || plan.status === '' || plan.status === 'open';
+
+// A pending booking whose seats are held but not yet paid for: never paid,
+// payment submitted and awaiting verification, or payment rejected. All of
+// these count toward the per-user limits on outstanding bookings.
+const AWAITING_PAYMENT = ['unpaid', 'pending_verification', 'failed'];
+// Of those, the ones whose seat hold can run out (a submitted payment is
+// waiting on the admin, so it never expires on its own).
+const EXPIRABLE_PAYMENT = ['unpaid', 'failed'];
+
+const newHoldExpiry = (from = new Date()) => new Date(from.getTime() + HOLD_MINUTES * 60 * 1000).toISOString();
 
 const canView = (req, booking) => req.user.role === 'admin' || String(booking.userId) === String(req.user.userId);
 
@@ -82,10 +95,10 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
     );
   };
 
-  // An unpaid pending booking whose hold has run out. Bookings created before
-  // holds existed have no holdExpiresAt and therefore never match.
+  // An unpaid (or payment-rejected) pending booking whose hold has run out.
+  // Bookings created before holds existed have no holdExpiresAt and never match.
   const expiredHoldFilter = (now) => ({
-    paymentStatus: 'unpaid',
+    paymentStatus: { $in: EXPIRABLE_PAYMENT },
     bookingStatus: 'pending',
     holdExpiresAt: { $exists: true, $lt: now },
   });
@@ -146,7 +159,7 @@ module.exports = (collections) => {
 
         const plan = await TravelPlanCollection.findOne({ slug: planSlug });
         if (!plan) return res.status(404).json({ success: false, message: 'Travel plan not found' });
-        if ((plan.status || 'open') !== 'open') {
+        if (!isOpen(plan)) {
           return res.status(409).json({ success: false, message: 'Booking is not open for this plan' });
         }
         if (hasStarted(plan)) {
@@ -160,13 +173,19 @@ module.exports = (collections) => {
         await sweepExpiredHolds(plan._id);
 
         const userId = new ObjectId(req.user.userId);
-        const unpaid = { userId, paymentStatus: 'unpaid', bookingStatus: 'pending' };
-        if (await BookingCollection.countDocuments({ ...unpaid, planId: plan._id }) >= MAX_UNPAID_PER_PLAN) {
-          return res.status(409).json({ success: false, message: 'You already have an unpaid booking for this plan — complete its payment first' });
-        }
-        if (await BookingCollection.countDocuments(unpaid) >= MAX_UNPAID_TOTAL) {
-          return res.status(409).json({ success: false, message: `You have ${MAX_UNPAID_TOTAL} unpaid bookings — complete or wait for them to expire before booking again` });
-        }
+        const outstanding = { userId, paymentStatus: { $in: AWAITING_PAYMENT }, bookingStatus: 'pending' };
+        // Returns the 409 message when the user is over a limit, else null.
+        const overLimit = async (allowed) => {
+          const [forPlan, total] = await Promise.all([
+            BookingCollection.countDocuments({ ...outstanding, planId: plan._id }),
+            BookingCollection.countDocuments(outstanding),
+          ]);
+          if (forPlan > allowed.perPlan) return 'You already have a booking for this plan that is awaiting payment or verification — complete it first';
+          if (total > allowed.total) return `You have ${MAX_UNPAID_TOTAL} bookings awaiting payment or verification — complete them or wait for them to expire before booking again`;
+          return null;
+        };
+        const limitError = await overLimit({ perPlan: MAX_UNPAID_PER_PLAN - 1, total: MAX_UNPAID_TOTAL - 1 });
+        if (limitError) return res.status(409).json({ success: false, message: limitError });
 
         // Generated before any seats are reserved, so a failure here cannot leak seats.
         const referenceCode = await generateUniqueReferenceCode(BookingCollection);
@@ -180,7 +199,10 @@ module.exports = (collections) => {
           );
           if (!reserved.modifiedCount) {
             const fresh = await TravelPlanCollection.findOne({ _id: plan._id });
-            const left = fresh?.seats_available ?? 0;
+            if (!fresh || !isOpen(fresh)) {
+              return res.status(409).json({ success: false, message: 'Booking is not open for this plan' });
+            }
+            const left = fresh.seats_available ?? 0;
             return res.status(409).json({ success: false, message: left > 0 ? `Only ${left} seat${left === 1 ? '' : 's'} left` : 'This plan is fully booked' });
           }
           await TravelPlanCollection.updateOne({ _id: plan._id, seats_available: 0, status: OPEN_STATUS }, { $set: { status: 'full' } });
@@ -190,7 +212,7 @@ module.exports = (collections) => {
         const advanceAmount = Math.ceil(totalAmount * ADVANCE_RATE);
         const createdAt = new Date();
         const now = createdAt.toISOString();
-        const holdExpiresAt = new Date(createdAt.getTime() + HOLD_MINUTES * 60 * 1000).toISOString();
+        const holdExpiresAt = newHoldExpiry(createdAt);
 
         const booking = {
           referenceCode,
@@ -225,6 +247,16 @@ module.exports = (collections) => {
         } catch (insertErr) {
           if (hasSeatLimit) await releaseSeats(plan._id, ticketCount);
           throw insertErr;
+        }
+
+        // The limit check above is count-then-insert, so parallel requests can
+        // all pass it. Re-check now that this booking exists and undo it if the
+        // user ended up over a limit.
+        const raceError = await overLimit({ perPlan: MAX_UNPAID_PER_PLAN, total: MAX_UNPAID_TOTAL });
+        if (raceError) {
+          const removed = await BookingCollection.deleteOne({ _id: result.insertedId, paymentStatus: 'unpaid' });
+          if (removed.deletedCount && hasSeatLimit) await releaseSeats(plan._id, ticketCount);
+          if (removed.deletedCount) return res.status(409).json({ success: false, message: raceError });
         }
 
         res.status(201).json({ success: true, bookingId: result.insertedId, referenceCode: booking.referenceCode, holdExpiresAt });
@@ -369,14 +401,33 @@ module.exports = (collections) => {
           : paymentStatus === 'advance_paid' ? booking.advanceAmount
           : 0;
         const update = { paymentStatus, paidAmount, dueAmount: booking.totalAmount - paidAmount };
+        const unset = {};
         if (['advance_paid', 'paid_full'].includes(paymentStatus) && booking.bookingStatus === 'pending') {
           update.bookingStatus = 'confirmed';
         }
+        // A pending booking sent back to unpaid/failed (payment rejected) gets a
+        // fresh hold: the traveller can pay again, and if they don't, the sweep
+        // releases the seats. Any other status ends the hold.
+        if (EXPIRABLE_PAYMENT.includes(paymentStatus) && booking.bookingStatus === 'pending') {
+          update.holdExpiresAt = newHoldExpiry();
+        } else {
+          unset.holdExpiresAt = '';
+        }
 
-        await BookingCollection.updateOne(
-          { _id: id },
-          { $set: update, $push: { statusHistory: historyEntry(paymentStatus, 'Payment status updated by admin') } }
+        // Conditional on the state we read, so this cannot undo a change made in
+        // the meantime (e.g. the hold sweep cancelling the booking and releasing
+        // its seats just before an admin confirms it).
+        const result = await BookingCollection.updateOne(
+          { _id: id, bookingStatus: booking.bookingStatus, paymentStatus: booking.paymentStatus },
+          {
+            $set: update,
+            ...(Object.keys(unset).length ? { $unset: unset } : {}),
+            $push: { statusHistory: historyEntry(paymentStatus, 'Payment status updated by admin') },
+          }
         );
+        if (!result.matchedCount) {
+          return res.status(409).json({ success: false, message: 'This booking changed while you were editing it. Reload and try again.' });
+        }
         res.json({ success: true, booking: await BookingCollection.findOne({ _id: id }) });
       } catch (err) {
         console.error('Update payment status error:', err);

@@ -8,6 +8,8 @@ const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 const app = express();
+// Which proxies to trust for the client IP (rate limits key on req.ip).
+app.set('trust proxy', require('./src/utils/trustProxy').parseTrustProxy(process.env.TRUST_PROXY));
 const port = process.env.PORT || 5000;
 
 const { CORS_ORIGINS } = require('./src/config/constants');
@@ -165,7 +167,9 @@ async function run() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
-    console.error(error);
+    // Nothing is listening; exit non-zero so a supervisor restarts the server.
+    console.error('Server failed to start:', error);
+    process.exit(1);
   }
 }
 

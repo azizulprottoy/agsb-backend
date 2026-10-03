@@ -10,3 +10,6 @@ uploads/*
 .sf/
 .vscode/
 .idea/
+
+# Premium frame originals (never served publicly)
+private-uploads/

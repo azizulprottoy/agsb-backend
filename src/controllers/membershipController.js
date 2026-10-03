@@ -1,13 +1,26 @@
 const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
+// Features may contain commas ("Up to ৳1,000 off"), so they are never split on
+// commas: an array, a JSON array string (multipart/admin), or one per line.
+const parseFeatures = (val) => {
+  let list = val;
+  if (typeof val === 'string' && val.trim().startsWith('[')) {
+    try {
+      list = JSON.parse(val);
+    } catch {
+      list = val;
+    }
+  }
+  if (!Array.isArray(list)) list = String(list || '').split('\n');
+  return list.map((f) => String(f ?? '').trim()).filter(Boolean);
+};
+
 const buildMembershipData = (body) => ({
   name: body.name,
   price: body.price,
   period: body.period || '',
   desc: body.desc || '',
-  features: Array.isArray(body.features)
-    ? body.features
-    : String(body.features || '').split(',').map((f) => f.trim()).filter(Boolean),
+  features: parseFeatures(body.features),
   cta: body.cta || 'Get Started',
   popular: body.popular === true || body.popular === 'true',
   order: Number(body.order) || 0,
