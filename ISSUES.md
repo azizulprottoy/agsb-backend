@@ -125,7 +125,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
 - **Effect:** Any single bad record blanks the entire app.
 - **Fix:** Add a route-level `ErrorBoundary`, and guard these accesses with `?.` and `|| []`.
 
-### 11. File uploads have no type or size restriction and are served from the API origin
+### 11.-done File uploads have no type or size restriction and are served from the API origin
 - **Where:** `BE` src/middleware/upload.js:13-28 · index.js:49
 - **Severity / Verified:** High / Code
 - **Problem:** There is no multer `fileFilter` and no `limits`. The file extension is taken from the uploaded filename, and `express.static` serves the files from the API origin.
@@ -139,7 +139,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
 
 ## Medium
 
-### 12. Edit (PUT) endpoints rebuild the entire document
+### 12.-done Edit (PUT) endpoints rebuild the entire document
 - **Where:** `BE` the `buildXData` function used by every `editX`, e.g. planController.js:40-56, blogController.js:4-14, districtController.js:14-30, hotelController.js:14-24, membershipController.js:33-43
 - **Severity / Verified:** Medium / Code. It did **not** reproduce through the admin UI, because the admin forms always send every field.
 - **Problem:** Any field missing from the request body becomes `null` or goes back to its default.
@@ -149,7 +149,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - re-date a blog post to today.
 - **Fix:** For PUT, build `$set` only from the fields that are present (as `profileController` already does), or validate the full payload and return 400.
 
-### 13. Bad IDs return 500, and missing records return success
+### 13.-done Bad IDs return 500, and missing records return success
 - **Where:** `BE` every edit/delete `new ObjectId(req.params.id)` (e.g. blogController.js:51, 61), every `new ObjectId(body.district_id …)`, and the guide `district_ids.map`
 - **Severity / Verified:** Medium / Code
 - **Effect:**
@@ -158,7 +158,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Deletes return the raw `DeleteResult`.
 - **Fix:** Validate IDs with `ObjectId.isValid` and return 400. Check `matchedCount` / `deletedCount` and return 404. Ensure array fields really are arrays.
 
-### 14. No database indexes, so nothing is actually unique
+### 14.-done No database indexes, so nothing is actually unique
 - **Where:** `BE` src/config/db.js (no `createIndex` anywhere) · authController.js:50-68 · src/utils/refCode.js:11-16 · bookingController.js:179
 - **Severity / Verified:** Medium / Code
 - **Problem:** Uniqueness is enforced only by find-then-insert, which can race. Lookups are full collection scans.
@@ -172,20 +172,20 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Catch duplicate-key error 11000 and return 409.
   - In the admin forms, validate slugs with `pattern="[a-z0-9-]+"` and auto-generate them from the English name.
 
-### 15. Email addresses are case-sensitive
+### 15.-done Email addresses are case-sensitive
 - **Where:** `BE` authController.js · `WEB` src/pages/SignupPage.jsx:18-35, LoginPage.jsx:16-25
 - **Severity / Verified:** Medium / Code
 - **Effect:** `User@x.com` and `user@x.com` become two separate accounts, and logging in with a different casing fails.
 - **Fix:** Trim and lowercase the email on both client and server, and back it with the unique index from #14.
 
-### 16. No global error handler or 404 handler, so HTML stack traces leak
+### 16.-done No global error handler or 404 handler, so HTML stack traces leak
 - **Where:** `BE` index.js
 - **Severity / Verified:** Medium / Code
 - **Problem:** `NODE_ENV` is never set. Malformed JSON, or a multer `LIMIT_UNEXPECTED_FILE`, falls through to Express's default handler.
 - **Effect:** The response is an HTML stack trace that includes server paths. Frontends that expect JSON break on it (see #30).
 - **Fix:** Add a JSON error middleware and a JSON 404 handler, and set `NODE_ENV=production` in deployment.
 
-### 17. Contact form can be spammed and accepts double submits
+### 17.-done Contact form can be spammed and accepts double submits
 - **Where:** `BE` src/controllers/contactController.js:4-28 · `WEB` src/pages/ContactPage.jsx:13-22
 - **Severity / Verified:** Medium / Code
 - **Problem:**
@@ -198,71 +198,71 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Backend: add a rate limit, coerce fields with `String()`, cap their lengths, and validate the phone with the existing `BD_PHONE` regex.
   - Site: disable the submit button while the request is in flight.
 
-### 18. Cancelling a booking twice releases its seats twice
+### 18.-done Cancelling a booking twice releases its seats twice
 - **Where:** `BE` bookingController.js:253-265
 - **Severity / Verified:** Medium / Code
 - **Problem:** Cancellation reads the booking, updates it without a condition, then releases the seats.
 - **Effect:** Two concurrent cancels (a double click, or two admins) push seat inventory above capacity.
 - **Fix:** Update with `{ _id, bookingStatus: { $ne: 'cancelled' } }`, and release seats only when `modifiedCount === 1`.
 
-### 19. No pagination anywhere
+### 19.-done No pagination anywhere
 - **Where:** `BE` every `find().toArray()` (notably userController.js:4, bookingController.js:213, contactController.js:31) · `AD` every list page
 - **Severity / Verified:** Medium / Code
 - **Effect:** As the data grows, admin pages load entire collections into memory, and the responses carry every user's personal data at once. There is also no search.
 - **Fix:** Add `?page=&limit=` with a maximum, use projections, and add pagination and search to the admin lists.
 
-### 20. Rich-text HTML is stored unsanitized and executed inside the admin editor
+### 20.-done Rich-text HTML is stored unsanitized and executed inside the admin editor
 - **Where:** `AD` src/components/RichTextEditor.jsx:47-120 · `BE` blogController.js:10, planController.js:50-51
 - **Severity / Verified:** Medium / Code
 - **Problem:** The backend stores HTML as-is. The editor writes it with `doc.write` into an unsandboxed `about:blank` iframe, which shares the admin panel's origin. (The public site is safe: it sanitizes with DOMPurify.)
 - **Effect:** A post containing `<img src=x onerror=...>` runs code when any admin opens Edit, and that code can read `localStorage.adminToken`.
 - **Fix:** Sanitize on the server (e.g. `sanitize-html`) and run DOMPurify before writing into the editor.
 
-### 21. Admin pages crash on a 403/500 or when the backend is down
+### 21.-done Admin pages crash on a 403/500 or when the backend is down
 - **Where:** `AD` src/routes/Routes.jsx:23-34, 36-161 · Users.jsx:4 · Contact.jsx:9 · Divisions.jsx:10 · Membership.jsx:12
 - **Severity / Verified:** Medium / Code
 - **Problem:** There is no `errorElement` and no catch-all route. Loaders pass error JSON straight to the page.
 - **Effect:** The page shows React Router's "Unexpected Application Error", or crashes with `rows.map is not a function`.
 - **Fix:** Add an `errorElement` and a 404 route, throw on `!res.ok`, and guard with `Array.isArray`, as Bookings and PaymentMethods already do.
 
-### 22. Admin actions fail silently
+### 22.-done Admin actions fail silently
 - **Where:** `AD` src/utils/api.js:8-26 · every `handleDelete` (e.g. Divisions.jsx:52, Contact.jsx:23) · Contact.jsx:12-17
 - **Severity / Verified:** Medium / Code
 - **Problem:** `res.ok` is never checked, and `res.json()` runs without a try/catch. Handlers only act on success and have no `else` branch.
 - **Effect:** A failed delete or status change shows nothing, so the admin assumes it worked.
 - **Fix:** Use a central fetch helper that returns or throws `{success:false, message}`, and show a toast on every failure.
 
-### 23. Double-clicking a submit button creates duplicate records
+### 23.-done Double-clicking a submit button creates duplicate records
 - **Where:** `AD` every submit button (e.g. Divisions.jsx:75, Blog.jsx:138) · `WEB` the Signup, Login and Contact forms
 - **Severity / Verified:** Medium / Code
 - **Effect:** Duplicate divisions, posts, messages and so on, and the backend has no unique indexes to stop them (#14).
 - **Fix:** Add a `submitting` state that disables the button while the request is in flight.
 
-### 24. Free signup gets the paid "Explorer" plan
+### 24.-done Free signup gets the paid "Explorer" plan
 - **Where:** `BE` authController.js:63 (`plan: 'Explorer'`)
 - **Severity / Verified:** Medium / Runtime. After "Sign Up Free", the admin Users page shows the plan as Explorer (the ৳199 tier).
 - **Fix:** Default new users to the Free plan.
 
-### 25. District `trip_type` is never saved
+### 25.-done District `trip_type` is never saved
 - **Where:** `BE` districtController.js:14-30 · `AD` Districts form (no field) · `WEB` HomePage.jsx:91, DistrictsPage.jsx:83
 - **Severity / Verified:** Medium / Runtime. All 13 test districts have no `trip_type`, so the home and district cards show an empty badge.
 - **Fix:** Add a `trip_type` field to the admin form and include it in `buildDistrictData`.
 
-### 26. Frames page ignores admin-uploaded frames
+### 26.-done Frames page ignores admin-uploaded frames
 - **Where:** `WEB` src/pages/FramesPage.jsx:8, 53
 - **Severity / Verified:** Medium / Runtime
 - **Problem:** The page fetches `/districts` and shows district photos, all labelled "Free". The download buttons have no handler, and the price "৳199/mo" is hard-coded.
 - **Effect:** None of the 3 frames created in admin (2 of them premium) appear on the site.
 - **Fix:** Read from `GET /api/frames` and add a real download link.
 
-### 27. Map is clipped on mobile
+### 27.-done Map is clipped on mobile
 - **Where:** `WEB` src/pages/MapPage.jsx:32-34
 - **Severity / Verified:** Medium / Runtime
 - **Problem:** At a 390 px viewport, the SVG renders 558 px wide at x = -84, inside a container with `overflow-hidden`. `100vh` also ignores the mobile URL bar.
 - **Effect:** Sylhet, Chattogram, Cox's Bazar, Bandarban, Rangamati and the north-west are cut off, with no way to pan or zoom.
 - **Fix:** Fit the map with `max-width: 100%; height: auto`, use `dvh`, and consider pinch-zoom.
 
-### 28. Profile check-ins can be lost or toggled by accident
+### 28.-done Profile check-ins can be lost or toggled by accident
 - **Where:** `WEB` src/pages/ProfilePage.jsx:63-66, 156-163
 - **Severity / Verified:** Medium / Code
 - **Problem:** `toggleDistrict` builds the next list from the current render's state, doesn't `await` the save, and has no catch. A single tap toggles a district immediately.
@@ -272,7 +272,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Scrolling the map on a phone toggles districts by accident.
 - **Fix:** Use a functional update (or server-side `$addToSet` / `$pull`), disable clicks while a save is in flight, show errors, and require a tap then confirm on touch.
 
-### 29. Public pages have no loading, error or empty states
+### 29.-done Public pages have no loading, error or empty states
 - **Where:** `WEB`
   - Ignore `loading` and `error`: HomePage.jsx:11-14, BlogPage.jsx:8, PlansPage.jsx:9, PartnersPage.jsx:7, MembershipPage.jsx:6, FramesPage.jsx:8, MapPage.jsx:12, ProfilePage.jsx:213.
   - Render blank while loading: BlogDetailPage.jsx:12, DistrictDetailPage.jsx:16, PlanDetailPage.jsx:21, CheckoutPage.jsx:36, PaymentPage.jsx:21, BookingPage.jsx:34.
@@ -280,14 +280,14 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
 - **Effect:** When the backend is down, users see headings over empty grids, or "No bookings yet" when the request actually failed.
 - **Fix:** Add shared `Spinner`, `ErrorState` and `EmptyState` components and use them on every page.
 
-### 30. Site shows raw parse errors when the server returns HTML
+### 30.-done Site shows raw parse errors when the server returns HTML
 - **Where:** `WEB` src/lib/api.js:28, 39
 - **Severity / Verified:** Medium / Code
 - **Problem:** `res.json()` is called on every response, whatever its type.
 - **Effect:** An Express "Cannot GET" page or a proxy's 502 page reaches the user as "Unexpected token '<'…".
 - **Fix:** Check the `content-type` header, or wrap the parse in a try/catch and fall back to `res.statusText`.
 
-### 31. Dead buttons and placeholder links on the public site
+### 31.-done Dead buttons and placeholder links on the public site
 - **Where:** `WEB`
   - MembershipPage.jsx:34: plan buttons have no handler, and the page lists SSLCommerz, which isn't supported.
   - PlansPage.jsx:51: the "Save" button does nothing.
@@ -297,7 +297,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
 - **Effect:** "WhatsApp us" and the "Join" buttons do nothing.
 - **Fix:** Wire up or hide these controls, and move the real contact links into config.
 
-### 32. SEO and hosting gaps
+### 32.-done SEO and hosting gaps
 - **Where:** `WEB` index.html:6-7 · the whole app
 - **Severity / Verified:** Medium / Code
 - **Problem:**
@@ -310,20 +310,20 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Add a rewrite to `index.html` for the chosen host.
   - Consider prerendering the detail pages.
 
-### 33. Admin panel is unusable on mobile
+### 33.-done Admin panel is unusable on mobile
 - **Where:** `AD` src/Layout/Sidebar/Sidebar.jsx:53 · the forms
 - **Severity / Verified:** Medium / Code
 - **Problem:** The sidebar is a fixed `w-64`, and the forms use fixed `grid-cols-2` / `grid-cols-3` layouts.
 - **Effect:** On a phone, content gets about 120 px of width.
 - **Fix:** Turn the sidebar into a drawer below `md`, and use `grid-cols-1 sm:grid-cols-2` in the forms.
 
-### 34. Hard-coded statistics don't match the real data
+### 34.-done Hard-coded statistics don't match the real data
 - **Where:** `WEB` HomePage.jsx:53-58 · src/data/index.js · DistrictsPage.jsx:49
 - **Severity / Verified:** Medium / Runtime
 - **Problem:** The home page shows "640+ attractions / 120+ plans / 10,000+ members", and the district filter shows "All (64)" and "Dhaka (13)", while stage has 5 plans and 13 districts.
 - **Fix:** Compute these numbers from the API.
 
-### 35. Large single-chunk bundles and repeated full-list fetches
+### 35.-done Large single-chunk bundles and repeated full-list fetches
 - **Where:** `WEB` src/App.jsx:5-23 (396 KB JS, one chunk) · `AD` (483 KB, one chunk) · `WEB` DistrictDetailPage.jsx:11-14, HomePage.jsx:11-14, BlogDetailPage.jsx:10
 - **Severity / Verified:** Medium / Code (build output)
 - **Problem:** Neither app uses code splitting. Each detail page re-downloads the full `/districts`, `/plans` and `/divisions` lists.

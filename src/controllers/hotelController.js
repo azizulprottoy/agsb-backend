@@ -1,5 +1,6 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { optionalRefId } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const parseJsonField = (val, fallback) => {
   if (val === undefined || val === null || val === '') return fallback;
@@ -13,7 +14,7 @@ const parseJsonField = (val, fallback) => {
 
 const buildHotelData = (body) => ({
   name: body.name,
-  district_id: body.district_id ? new ObjectId(body.district_id) : null,
+  district_id: optionalRefId(body.district_id, 'district_id'),
   type: body.type || 'hotel',
   rating: Number(body.rating) || 0,
   price: body.price || '',
@@ -30,40 +31,25 @@ module.exports = ({ HotelCollection }) => ({
   },
 
   addHotel: async (req, res) => {
-    try {
-      const newHotel = buildHotelData(req.body);
-      newHotel.image = req.file ? `/uploads/hotels/${req.file.filename}` : '';
+    const newHotel = buildHotelData(req.body);
+    newHotel.image = req.file ? `/uploads/hotels/${req.file.filename}` : '';
 
-      const result = await HotelCollection.insertOne(newHotel);
-      res.json(result);
-    } catch (err) {
-      console.error('Add hotel error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await HotelCollection.insertOne(newHotel);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editHotel: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildHotelData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/hotels/${req.file.filename}`;
-      }
-
-      await HotelCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Hotel updated successfully', updatedHotel: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit hotel error:', err);
-      res.status(500).json({ success: false, message: 'Error updating hotel' });
+    const updatedData = pickPresent(buildHotelData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/hotels/${req.file.filename}`;
     }
+
+    const updatedHotel = await updateById(HotelCollection, req.params.id, updatedData, 'Hotel');
+    res.json({ success: true, message: 'Hotel updated successfully', updatedHotel });
   },
 
   deleteHotel: async (req, res) => {
-    try {
-      const result = await HotelCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting hotel' });
-    }
+    res.json(await deleteById(HotelCollection, req.params.id, 'Hotel'));
   },
 });

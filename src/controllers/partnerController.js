@@ -1,5 +1,5 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildPartnerData = (body) => ({
   name: body.name,
@@ -18,40 +18,25 @@ module.exports = ({ PartnerCollection }) => ({
   },
 
   addPartner: async (req, res) => {
-    try {
-      const newPartner = buildPartnerData(req.body);
-      newPartner.image = req.file ? `/uploads/partners/${req.file.filename}` : '';
+    const newPartner = buildPartnerData(req.body);
+    newPartner.image = req.file ? `/uploads/partners/${req.file.filename}` : '';
 
-      const result = await PartnerCollection.insertOne(newPartner);
-      res.json(result);
-    } catch (err) {
-      console.error('Add partner error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await PartnerCollection.insertOne(newPartner);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editPartner: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildPartnerData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/partners/${req.file.filename}`;
-      }
-
-      await PartnerCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Partner updated successfully', updatedPartner: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit partner error:', err);
-      res.status(500).json({ success: false, message: 'Error updating partner' });
+    const updatedData = pickPresent(buildPartnerData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/partners/${req.file.filename}`;
     }
+
+    const updatedPartner = await updateById(PartnerCollection, req.params.id, updatedData, 'Partner');
+    res.json({ success: true, message: 'Partner updated successfully', updatedPartner });
   },
 
   deletePartner: async (req, res) => {
-    try {
-      const result = await PartnerCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting partner' });
-    }
+    res.json(await deleteById(PartnerCollection, req.params.id, 'Partner'));
   },
 });

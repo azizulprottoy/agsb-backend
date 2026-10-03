@@ -1,5 +1,5 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildFrameData = (body) => ({
   districtSlug: body.districtSlug || '',
@@ -14,40 +14,25 @@ module.exports = ({ FrameCollection }) => ({
   },
 
   addFrame: async (req, res) => {
-    try {
-      const newFrame = buildFrameData(req.body);
-      newFrame.image = req.file ? `/uploads/frames/${req.file.filename}` : '';
+    const newFrame = buildFrameData(req.body);
+    newFrame.image = req.file ? `/uploads/frames/${req.file.filename}` : '';
 
-      const result = await FrameCollection.insertOne(newFrame);
-      res.json(result);
-    } catch (err) {
-      console.error('Add frame error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await FrameCollection.insertOne(newFrame);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editFrame: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildFrameData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/frames/${req.file.filename}`;
-      }
-
-      await FrameCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Frame updated successfully', updatedFrame: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit frame error:', err);
-      res.status(500).json({ success: false, message: 'Error updating frame' });
+    const updatedData = pickPresent(buildFrameData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/frames/${req.file.filename}`;
     }
+
+    const updatedFrame = await updateById(FrameCollection, req.params.id, updatedData, 'Frame');
+    res.json({ success: true, message: 'Frame updated successfully', updatedFrame });
   },
 
   deleteFrame: async (req, res) => {
-    try {
-      const result = await FrameCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting frame' });
-    }
+    res.json(await deleteById(FrameCollection, req.params.id, 'Frame'));
   },
 });

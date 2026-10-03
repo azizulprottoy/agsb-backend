@@ -1,4 +1,12 @@
-const { ObjectId } = require('mongodb');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
+
+const buildDivisionData = (body) => ({
+  name_bn: body.name_bn,
+  name_en: body.name_en,
+  slug: body.slug,
+  color: body.color || '#4CAF50',
+  districtCount: Number(body.districtCount) || 0,
+});
 
 module.exports = ({ DivisionCollection }) => ({
   getDivisions: async (req, res) => {
@@ -7,43 +15,18 @@ module.exports = ({ DivisionCollection }) => ({
   },
 
   addDivision: async (req, res) => {
-    try {
-      const { name_bn, name_en, slug, color, districtCount } = req.body;
-      const newDivision = {
-        name_bn,
-        name_en,
-        slug,
-        color: color || '#4CAF50',
-        districtCount: Number(districtCount) || 0,
-      };
-      const result = await DivisionCollection.insertOne(newDivision);
-      res.json(result);
-    } catch (err) {
-      console.error('Add division error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await DivisionCollection.insertOne(buildDivisionData(req.body));
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editDivision: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { name_bn, name_en, slug, color, districtCount } = req.body;
-      const updatedData = { name_bn, name_en, slug, color, districtCount: Number(districtCount) || 0 };
-
-      await DivisionCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Division updated successfully', updatedDivision: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit division error:', err);
-      res.status(500).json({ success: false, message: 'Error updating division' });
-    }
+    const updatedData = pickPresent(buildDivisionData(req.body), req.body);
+    const updatedDivision = await updateById(DivisionCollection, req.params.id, updatedData, 'Division');
+    res.json({ success: true, message: 'Division updated successfully', updatedDivision });
   },
 
   deleteDivision: async (req, res) => {
-    try {
-      const result = await DivisionCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting division' });
-    }
+    res.json(await deleteById(DivisionCollection, req.params.id, 'Division'));
   },
 });

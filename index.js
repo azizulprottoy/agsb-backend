@@ -7,6 +7,8 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 const { CORS_ORIGINS } = require('./src/config/constants');
+const { isDuplicateKeyError, duplicateKeyMessage } = require('./src/utils/http');
+const { MAX_FILE_SIZE } = require('./src/middleware/upload');
 const { connectDB } = require('./src/config/db');
 
 const authRoutes = require('./src/routes/authRoutes');
@@ -47,7 +49,14 @@ async function run() {
   try {
     const collections = await connectDB();
 
-    app.use('/uploads', express.static(uploadDirectory));
+    // Uploaded files are user-supplied: never let a browser sniff them into
+    // HTML/script, and never let one run as a page on the API origin.
+    app.use('/uploads', express.static(uploadDirectory, {
+      setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+      },
+    }));
 
     app.use('/api', authRoutes(collections));
     app.use('/api', profileRoutes(collections));
@@ -79,17 +88,40 @@ async function run() {
     sweep();
     setInterval(sweep, HOLD_SWEEP_INTERVAL_MS).unref();
 
+    // Anything no route matched gets a JSON 404 instead of Express's HTML page.
+    app.use((req, res) => {
+      res.status(404).json({ success: false, message: 'Not found' });
+    });
+
     // Final error handler: any error passed to next(err) — including rejected
     // async handlers (see utils/asyncRouter) — gets a JSON response instead of
     // crashing the process or leaking an HTML stack trace.
     // eslint-disable-next-line no-unused-vars
     app.use((err, req, res, next) => {
-      const status = err.status || err.statusCode || (err.name === 'MulterError' ? 400 : 500);
+      // A request that failed after multer stored its upload must not leave an orphan file.
+      if (req.file?.path) fs.unlink(req.file.path, () => {});
+
+      let status = Number(err.status || err.statusCode) || 500;
+      let { message } = err;
+      if (err.name === 'MulterError') {
+        status = 400;
+        if (err.code === 'LIMIT_FILE_SIZE') message = `File too large (max ${MAX_FILE_SIZE / (1024 * 1024)} MB)`;
+        else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Only one image file is allowed';
+      } else if (isDuplicateKeyError(err)) {
+        status = 409;
+        message = duplicateKeyMessage(err);
+      } else if (err.type === 'entity.parse.failed') {
+        message = 'Malformed JSON body';
+      } else if (err.type === 'entity.too.large') {
+        message = 'Request body too large';
+      }
+      if (status < 400 || status > 599) status = 500;
+
       if (status >= 500) console.error(`${req.method} ${req.originalUrl}`, err);
       if (res.headersSent) return;
       res.status(status).json({
         success: false,
-        message: status >= 500 ? 'Internal server error' : err.message,
+        message: status >= 500 ? 'Internal server error' : message,
       });
     });
 

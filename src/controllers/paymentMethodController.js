@@ -1,9 +1,9 @@
-const { ObjectId } = require('mongodb');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildMethodData = (body) => ({
-  method: (body.method || '').trim(),
-  number: (body.number || '').trim(),
-  extradetails: (body.extradetails || '').trim(),
+  method: String(body.method || '').trim(),
+  number: String(body.number || '').trim(),
+  extradetails: String(body.extradetails || '').trim(),
   active: body.active === undefined ? true : body.active === true || body.active === 'true',
 });
 
@@ -16,39 +16,25 @@ module.exports = ({ PaymentMethodCollection }) => ({
   },
 
   addPaymentMethod: async (req, res) => {
-    try {
-      const data = buildMethodData(req.body);
-      if (!data.method || !data.number) {
-        return res.status(400).json({ success: false, message: 'Method and number are required' });
-      }
-      const result = await PaymentMethodCollection.insertOne(data);
-      res.json({ success: true, insertedId: result.insertedId });
-    } catch (err) {
-      console.error('Add payment method error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
+    const data = buildMethodData(req.body);
+    if (!data.method || !data.number) {
+      return res.status(400).json({ success: false, message: 'Method and number are required' });
     }
+    const result = await PaymentMethodCollection.insertOne(data);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed; method/number, when sent, must not be empty.
   editPaymentMethod: async (req, res) => {
-    try {
-      const data = buildMethodData(req.body);
-      if (!data.method || !data.number) {
-        return res.status(400).json({ success: false, message: 'Method and number are required' });
-      }
-      const result = await PaymentMethodCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: data });
-      res.json({ success: result.matchedCount > 0, message: result.matchedCount ? 'Payment method updated' : 'Payment method not found' });
-    } catch (err) {
-      console.error('Edit payment method error:', err);
-      res.status(500).json({ success: false, message: 'Error updating payment method' });
+    const data = pickPresent(buildMethodData(req.body), req.body);
+    if (data.method === '' || data.number === '') {
+      return res.status(400).json({ success: false, message: 'Method and number are required' });
     }
+    await updateById(PaymentMethodCollection, req.params.id, data, 'Payment method');
+    res.json({ success: true, message: 'Payment method updated' });
   },
 
   deletePaymentMethod: async (req, res) => {
-    try {
-      const result = await PaymentMethodCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting payment method' });
-    }
+    res.json(await deleteById(PaymentMethodCollection, req.params.id, 'Payment method'));
   },
 });

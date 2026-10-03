@@ -1,9 +1,10 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { optionalRefId } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildDistrictAgentData = (body) => ({
   name: body.name,
-  district_id: body.district_id ? new ObjectId(body.district_id) : null,
+  district_id: optionalRefId(body.district_id, 'district_id'),
   phone: body.phone || '',
   whatsapp: body.whatsapp || '',
   designation: body.designation || '',
@@ -17,40 +18,25 @@ module.exports = ({ DistrictAgentCollection }) => ({
   },
 
   addDistrictAgent: async (req, res) => {
-    try {
-      const newAgent = buildDistrictAgentData(req.body);
-      newAgent.image = req.file ? `/uploads/districtagents/${req.file.filename}` : '';
+    const newAgent = buildDistrictAgentData(req.body);
+    newAgent.image = req.file ? `/uploads/districtagents/${req.file.filename}` : '';
 
-      const result = await DistrictAgentCollection.insertOne(newAgent);
-      res.json(result);
-    } catch (err) {
-      console.error('Add district agent error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await DistrictAgentCollection.insertOne(newAgent);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editDistrictAgent: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildDistrictAgentData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/districtagents/${req.file.filename}`;
-      }
-
-      await DistrictAgentCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'District agent updated successfully', updatedDistrictAgent: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit district agent error:', err);
-      res.status(500).json({ success: false, message: 'Error updating district agent' });
+    const updatedData = pickPresent(buildDistrictAgentData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/districtagents/${req.file.filename}`;
     }
+
+    const updatedDistrictAgent = await updateById(DistrictAgentCollection, req.params.id, updatedData, 'District agent');
+    res.json({ success: true, message: 'District agent updated successfully', updatedDistrictAgent });
   },
 
   deleteDistrictAgent: async (req, res) => {
-    try {
-      const result = await DistrictAgentCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting district agent' });
-    }
+    res.json(await deleteById(DistrictAgentCollection, req.params.id, 'District agent'));
   },
 });

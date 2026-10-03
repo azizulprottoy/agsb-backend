@@ -1,5 +1,8 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { sanitizeRichText } = require('../utils/sanitizeHtml');
+const { requireId } = require('../utils/ids');
+const { httpError } = require('../utils/http');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const toArray = (val) => {
   if (Array.isArray(val)) return val;
@@ -47,8 +50,8 @@ const buildPlanData = (body) => ({
   cost: body.cost || '',
   price: toPrice(body.price),
   highlights: toArray(body.highlights),
-  description_bn: body.description_bn || '',
-  description_en: body.description_en || '',
+  description_bn: sanitizeRichText(body.description_bn || ''),
+  description_en: sanitizeRichText(body.description_en || ''),
   start_date: body.start_date || '',
   end_date: body.end_date || '',
   seats_available: toSeats(body.seats_available),
@@ -70,48 +73,39 @@ module.exports = ({ TravelPlanCollection }) => ({
   },
 
   addPlan: async (req, res) => {
-    try {
-      const newPlan = buildPlanData(req.body);
-      const scheduleError = validateSchedule(newPlan);
-      if (scheduleError) {
-        return res.status(400).json({ success: false, message: scheduleError });
-      }
-      newPlan.image = req.file ? `/uploads/plans/${req.file.filename}` : '';
+    const newPlan = buildPlanData(req.body);
+    const scheduleError = validateSchedule(newPlan);
+    if (scheduleError) throw httpError(400, scheduleError);
+    newPlan.image = req.file ? `/uploads/plans/${req.file.filename}` : '';
 
-      const result = await TravelPlanCollection.insertOne(newPlan);
-      res.json(result);
-    } catch (err) {
-      console.error('Add plan error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await TravelPlanCollection.insertOne(newPlan);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed, so a partial update can
+  // no longer reset status, seats or dates.
   editPlan: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildPlanData(req.body);
-      const scheduleError = validateSchedule(updatedData);
-      if (scheduleError) {
-        return res.status(400).json({ success: false, message: scheduleError });
-      }
-      if (req.file) {
-        updatedData.image = `/uploads/plans/${req.file.filename}`;
-      }
+    const updatedData = pickPresent(buildPlanData(req.body), req.body);
 
-      await TravelPlanCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Travel plan updated successfully', updatedPlan: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit plan error:', err);
-      res.status(500).json({ success: false, message: 'Error updating travel plan' });
+    // A date change is validated against the stored value of the other date.
+    if ('start_date' in updatedData || 'end_date' in updatedData) {
+      const existing = await TravelPlanCollection.findOne(
+        { _id: requireId(req.params.id) },
+        { projection: { start_date: 1, end_date: 1 } }
+      );
+      if (!existing) throw httpError(404, 'Travel plan not found');
+      const scheduleError = validateSchedule({ ...existing, ...updatedData });
+      if (scheduleError) throw httpError(400, scheduleError);
     }
+    if (req.file) {
+      updatedData.image = `/uploads/plans/${req.file.filename}`;
+    }
+
+    const updatedPlan = await updateById(TravelPlanCollection, req.params.id, updatedData, 'Travel plan');
+    res.json({ success: true, message: 'Travel plan updated successfully', updatedPlan });
   },
 
   deletePlan: async (req, res) => {
-    try {
-      const result = await TravelPlanCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting travel plan' });
-    }
+    res.json(await deleteById(TravelPlanCollection, req.params.id, 'Travel plan'));
   },
 });

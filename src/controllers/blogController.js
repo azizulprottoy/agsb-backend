@@ -1,13 +1,14 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { sanitizeRichText } = require('../utils/sanitizeHtml');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildBlogData = (body) => ({
   title_bn: body.title_bn,
   title_en: body.title_en,
   slug: body.slug,
   category: body.category || 'Guide',
-  excerpt: body.excerpt || '',
-  content: body.content || '',
+  excerpt: sanitizeRichText(body.excerpt || ''),
+  content: sanitizeRichText(body.content || ''),
   date: body.date || new Date().toISOString().slice(0, 10),
   readTime: body.readTime || '',
   districtSlug: body.districtSlug || '',
@@ -28,40 +29,25 @@ module.exports = ({ BlogCollection }) => ({
   },
 
   addBlogPost: async (req, res) => {
-    try {
-      const newPost = buildBlogData(req.body);
-      newPost.image = req.file ? `/uploads/blog/${req.file.filename}` : '';
+    const newPost = buildBlogData(req.body);
+    newPost.image = req.file ? `/uploads/blog/${req.file.filename}` : '';
 
-      const result = await BlogCollection.insertOne(newPost);
-      res.json(result);
-    } catch (err) {
-      console.error('Add blog post error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await BlogCollection.insertOne(newPost);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editBlogPost: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildBlogData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/blog/${req.file.filename}`;
-      }
-
-      await BlogCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Blog post updated successfully', updatedPost: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit blog post error:', err);
-      res.status(500).json({ success: false, message: 'Error updating blog post' });
+    const updatedData = pickPresent(buildBlogData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/blog/${req.file.filename}`;
     }
+
+    const updatedPost = await updateById(BlogCollection, req.params.id, updatedData, 'Blog post');
+    res.json({ success: true, message: 'Blog post updated successfully', updatedPost });
   },
 
   deleteBlogPost: async (req, res) => {
-    try {
-      const result = await BlogCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting blog post' });
-    }
+    res.json(await deleteById(BlogCollection, req.params.id, 'Blog post'));
   },
 });

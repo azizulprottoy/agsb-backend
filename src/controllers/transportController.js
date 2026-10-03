@@ -1,12 +1,13 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { optionalRefId } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const buildTransportData = (body) => ({
   name_bn: body.name_bn || '',
   name_en: body.name_en,
   type: body.type || 'bus',
-  from_district_id: body.from_district_id ? new ObjectId(body.from_district_id) : null,
-  to_district_id: body.to_district_id ? new ObjectId(body.to_district_id) : null,
+  from_district_id: optionalRefId(body.from_district_id, 'from_district_id'),
+  to_district_id: optionalRefId(body.to_district_id, 'to_district_id'),
   operator: body.operator || '',
   fare: body.fare || '',
   duration: body.duration || '',
@@ -20,40 +21,25 @@ module.exports = ({ TransportCollection }) => ({
   },
 
   addTransport: async (req, res) => {
-    try {
-      const newTransport = buildTransportData(req.body);
-      newTransport.image = req.file ? `/uploads/transports/${req.file.filename}` : '';
+    const newTransport = buildTransportData(req.body);
+    newTransport.image = req.file ? `/uploads/transports/${req.file.filename}` : '';
 
-      const result = await TransportCollection.insertOne(newTransport);
-      res.json(result);
-    } catch (err) {
-      console.error('Add transport error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await TransportCollection.insertOne(newTransport);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editTransport: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildTransportData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/transports/${req.file.filename}`;
-      }
-
-      await TransportCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Transport updated successfully', updatedTransport: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit transport error:', err);
-      res.status(500).json({ success: false, message: 'Error updating transport' });
+    const updatedData = pickPresent(buildTransportData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/transports/${req.file.filename}`;
     }
+
+    const updatedTransport = await updateById(TransportCollection, req.params.id, updatedData, 'Transport');
+    res.json({ success: true, message: 'Transport updated successfully', updatedTransport });
   },
 
   deleteTransport: async (req, res) => {
-    try {
-      const result = await TransportCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting transport' });
-    }
+    res.json(await deleteById(TransportCollection, req.params.id, 'Transport'));
   },
 });

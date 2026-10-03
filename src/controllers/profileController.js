@@ -1,9 +1,10 @@
-const { ObjectId } = require('mongodb');
+const { toObjectId } = require('../utils/ids');
 
 module.exports = ({ UserCollection }) => ({
   getProfile: async (req, res) => {
     try {
-      const user = await UserCollection.findOne({ _id: new ObjectId(req.user.userId) });
+      const userId = toObjectId(String(req.user.userId));
+      const user = userId && await UserCollection.findOne({ _id: userId });
       if (!user) {
         return res.status(404).json({ success: false, message: 'User not found' });
       }
@@ -24,12 +25,15 @@ module.exports = ({ UserCollection }) => ({
       if (district !== undefined) update.district = district;
       if (visitedDistricts !== undefined) update.visitedDistricts = visitedDistricts;
 
-      await UserCollection.updateOne(
-        { _id: new ObjectId(req.user.userId) },
-        { $set: update }
+      const userId = toObjectId(String(req.user.userId));
+      const user = userId && await UserCollection.findOneAndUpdate(
+        { _id: userId },
+        { $set: update },
+        { returnDocument: 'after' }
       );
-
-      const user = await UserCollection.findOne({ _id: new ObjectId(req.user.userId) });
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'User not found' });
+      }
       const { passwordHash, ...safeUser } = user;
       res.json({ success: true, user: safeUser });
     } catch (err) {

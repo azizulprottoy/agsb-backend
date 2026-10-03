@@ -1,5 +1,6 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { optionalRefId } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const parseJsonField = (val, fallback) => {
   if (val === undefined || val === null || val === '') return fallback;
@@ -12,11 +13,12 @@ const parseJsonField = (val, fallback) => {
 };
 
 const buildDistrictData = (body) => ({
-  division_id: body.division_id ? new ObjectId(body.division_id) : null,
+  division_id: optionalRefId(body.division_id, 'division_id'),
   name_bn: body.name_bn,
   name_en: body.name_en,
   slug: body.slug,
   tagline: body.tagline || '',
+  trip_type: String(body.trip_type || '').trim().slice(0, 40),
   best_time: body.best_time || '',
   budget: body.budget || '',
   difficulty: Number(body.difficulty) || 1,
@@ -44,40 +46,25 @@ module.exports = ({ DistrictCollection }) => ({
   },
 
   addDistrict: async (req, res) => {
-    try {
-      const newDistrict = buildDistrictData(req.body);
-      newDistrict.image = req.file ? `/uploads/districts/${req.file.filename}` : '';
+    const newDistrict = buildDistrictData(req.body);
+    newDistrict.image = req.file ? `/uploads/districts/${req.file.filename}` : '';
 
-      const result = await DistrictCollection.insertOne(newDistrict);
-      res.json(result);
-    } catch (err) {
-      console.error('Add district error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await DistrictCollection.insertOne(newDistrict);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editDistrict: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildDistrictData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/districts/${req.file.filename}`;
-      }
-
-      await DistrictCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'District updated successfully', updatedDistrict: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit district error:', err);
-      res.status(500).json({ success: false, message: 'Error updating district' });
+    const updatedData = pickPresent(buildDistrictData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/districts/${req.file.filename}`;
     }
+
+    const updatedDistrict = await updateById(DistrictCollection, req.params.id, updatedData, 'District');
+    res.json({ success: true, message: 'District updated successfully', updatedDistrict });
   },
 
   deleteDistrict: async (req, res) => {
-    try {
-      const result = await DistrictCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting district' });
-    }
+    res.json(await deleteById(DistrictCollection, req.params.id, 'District'));
   },
 });

@@ -77,7 +77,7 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
         phone: phone || '',
         district: district || '',
         passwordHash,
-        plan: 'Explorer',
+        plan: 'Free',
         joined: new Date().toISOString().slice(0, 10),
         visitedDistricts: [],
       };
@@ -97,6 +97,10 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
         user: { id: result.insertedId, name, email, phone: newUser.phone, district: newUser.district, plan: newUser.plan, joined: newUser.joined, visitedDistricts: [] },
       });
     } catch (err) {
+      // Lost a race with a concurrent signup for the same email (unique index).
+      if (err.code === 11000) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists' });
+      }
       console.error('Signup error:', err);
       return res.status(500).json({ success: false, message: 'Internal server error' });
     }

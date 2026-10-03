@@ -1,5 +1,7 @@
 const { ObjectId } = require('mongodb');
 const { generateUniqueReferenceCode } = require('../utils/refCode');
+const { BD_PHONE } = require('../utils/contactValidation');
+const { sendList } = require('../utils/pagination');
 
 // Share of the total paid online to hold the booking; the rest is paid on arrival.
 const ADVANCE_RATE = 0.4;
@@ -15,10 +17,16 @@ const RELATIONS = ['self', 'spouse', 'parent', 'child', 'sibling', 'relative', '
 const PAYMENT_STATUSES = ['unpaid', 'pending_verification', 'advance_paid', 'paid_full', 'failed'];
 const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed'];
 
-const BD_PHONE = /^(?:\+?880|0)1[3-9]\d{8}$/;
 const TRX_ID = /^[A-Z0-9]{6,30}$/;
 
-const toObjectId = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
+// Strict ObjectId check: rejects 12-char strings that isValid() alone would accept.
+const toObjectId = (id) => (typeof id === 'string' && ObjectId.isValid(id) && String(new ObjectId(id)) === id ? new ObjectId(id) : null);
+
+const BOOKING_SEARCH_FIELDS = [
+  'referenceCode', 'userName', 'userEmail', 'planTitle_en', 'planTitle_bn', 'travellers.phone', 'payment.transactionId',
+];
+
+const invalidId = (res) => res.status(400).json({ success: false, message: 'Invalid id' });
 
 const historyEntry = (status, note) => ({ status, note: note || '', date: new Date().toISOString() });
 
@@ -211,7 +219,8 @@ module.exports = (collections) => {
 
     getBooking: async (req, res) => {
       const id = toObjectId(req.params.id);
-      const booking = id && await BookingCollection.findOne({ _id: id });
+      if (!id) return invalidId(res);
+      const booking = await BookingCollection.findOne({ _id: id });
       if (!booking || !canView(req, booking)) {
         return res.status(404).json({ success: false, message: 'Booking not found' });
       }
@@ -222,7 +231,8 @@ module.exports = (collections) => {
     submitPayment: async (req, res) => {
       try {
         const id = toObjectId(req.params.id);
-        const booking = id && await BookingCollection.findOne({ _id: id });
+        if (!id) return invalidId(res);
+        const booking = await BookingCollection.findOne({ _id: id });
         if (!booking || String(booking.userId) !== String(req.user.userId)) {
           return res.status(404).json({ success: false, message: 'Booking not found' });
         }
@@ -295,19 +305,35 @@ module.exports = (collections) => {
       }
     },
 
+    // Admin list. Supports ?page&limit&q (see utils/pagination) plus
+    // ?paymentStatus and ?bookingStatus filters (whitelisted values).
     getAllBookings: async (req, res) => {
-      const result = await BookingCollection.find().sort({ _id: -1 }).toArray();
-      res.json(result);
+      const filter = {};
+      const { paymentStatus, bookingStatus } = req.query;
+      if (paymentStatus !== undefined && paymentStatus !== '') {
+        if (!PAYMENT_STATUSES.includes(paymentStatus)) {
+          return res.status(400).json({ success: false, message: 'Invalid payment status' });
+        }
+        filter.paymentStatus = paymentStatus;
+      }
+      if (bookingStatus !== undefined && bookingStatus !== '') {
+        if (!BOOKING_STATUSES.includes(bookingStatus)) {
+          return res.status(400).json({ success: false, message: 'Invalid booking status' });
+        }
+        filter.bookingStatus = bookingStatus;
+      }
+      await sendList(req, res, BookingCollection, { filter, searchFields: BOOKING_SEARCH_FIELDS });
     },
 
     updatePaymentStatus: async (req, res) => {
       try {
         const id = toObjectId(req.params.id);
-        const { paymentStatus } = req.body;
+        if (!id) return invalidId(res);
+        const { paymentStatus } = req.body || {};
         if (!PAYMENT_STATUSES.includes(paymentStatus)) {
           return res.status(400).json({ success: false, message: 'Invalid payment status' });
         }
-        const booking = id && await BookingCollection.findOne({ _id: id });
+        const booking = await BookingCollection.findOne({ _id: id });
         if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
 
         const paidAmount = paymentStatus === 'paid_full' ? booking.totalAmount
@@ -332,23 +358,35 @@ module.exports = (collections) => {
     updateBookingStatus: async (req, res) => {
       try {
         const id = toObjectId(req.params.id);
-        const { status } = req.body;
+        if (!id) return invalidId(res);
+        const { status } = req.body || {};
         if (!BOOKING_STATUSES.includes(status)) {
           return res.status(400).json({ success: false, message: 'Invalid booking status' });
         }
-        const booking = id && await BookingCollection.findOne({ _id: id });
+        const booking = await BookingCollection.findOne({ _id: id });
         if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
-        if (booking.bookingStatus === 'cancelled' && status !== 'cancelled') {
-          return res.status(409).json({ success: false, message: 'A cancelled booking cannot be reopened; ask the traveller to book again' });
-        }
+        const reopenError = () => res.status(409).json({ success: false, message: 'A cancelled booking cannot be reopened; ask the traveller to book again' });
+        if (booking.bookingStatus === 'cancelled' && status !== 'cancelled') return reopenError();
 
-        await BookingCollection.updateOne(
-          { _id: id },
-          { $set: { bookingStatus: status }, $push: { statusHistory: historyEntry(status, 'Booking status updated by admin') } }
+        // Conditional on "not cancelled yet": of two concurrent cancels (or a
+        // cancel racing the hold sweep) only one modifies the document, and only
+        // that one releases the seats. The same condition stops a status change
+        // from reopening a booking that was cancelled after we read it.
+        const result = await BookingCollection.updateOne(
+          { _id: id, bookingStatus: { $ne: 'cancelled' } },
+          {
+            $set: { bookingStatus: status },
+            $push: { statusHistory: historyEntry(status, 'Booking status updated by admin') },
+            ...(status === 'cancelled' ? { $unset: { holdExpiresAt: '' } } : {}),
+          }
         );
-        if (status === 'cancelled' && booking.bookingStatus !== 'cancelled') {
-          await releaseSeats(booking.planId, booking.ticketCount);
+        if (result.modifiedCount === 1) {
+          if (status === 'cancelled') await releaseSeats(booking.planId, booking.ticketCount);
+        } else if (status !== 'cancelled') {
+          // Cancelled between our read and the update.
+          return reopenError();
         }
+        // Cancelling an already-cancelled booking is an idempotent no-op.
         res.json({ success: true, booking: await BookingCollection.findOne({ _id: id }) });
       } catch (err) {
         console.error('Update booking status error:', err);

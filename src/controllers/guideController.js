@@ -1,5 +1,6 @@
-const { ObjectId } = require('mongodb');
 const { toPublicUrl } = require('../utils/paths');
+const { refIdArray } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const parseJsonField = (val, fallback) => {
   if (val === undefined || val === null || val === '') return fallback;
@@ -13,7 +14,7 @@ const parseJsonField = (val, fallback) => {
 
 const buildGuideData = (body) => ({
   name: body.name,
-  district_ids: parseJsonField(body.district_ids, []).map((id) => new ObjectId(id)),
+  district_ids: refIdArray(body.district_ids, 'district_ids'),
   phone: body.phone || '',
   languages: parseJsonField(body.languages, []),
   experience_years: Number(body.experience_years) || 0,
@@ -30,40 +31,25 @@ module.exports = ({ GuideCollection }) => ({
   },
 
   addGuide: async (req, res) => {
-    try {
-      const newGuide = buildGuideData(req.body);
-      newGuide.image = req.file ? `/uploads/guides/${req.file.filename}` : '';
+    const newGuide = buildGuideData(req.body);
+    newGuide.image = req.file ? `/uploads/guides/${req.file.filename}` : '';
 
-      const result = await GuideCollection.insertOne(newGuide);
-      res.json(result);
-    } catch (err) {
-      console.error('Add guide error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const result = await GuideCollection.insertOne(newGuide);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editGuide: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildGuideData(req.body);
-      if (req.file) {
-        updatedData.image = `/uploads/guides/${req.file.filename}`;
-      }
-
-      await GuideCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Guide updated successfully', updatedGuide: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit guide error:', err);
-      res.status(500).json({ success: false, message: 'Error updating guide' });
+    const updatedData = pickPresent(buildGuideData(req.body), req.body);
+    if (req.file) {
+      updatedData.image = `/uploads/guides/${req.file.filename}`;
     }
+
+    const updatedGuide = await updateById(GuideCollection, req.params.id, updatedData, 'Guide');
+    res.json({ success: true, message: 'Guide updated successfully', updatedGuide });
   },
 
   deleteGuide: async (req, res) => {
-    try {
-      const result = await GuideCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting guide' });
-    }
+    res.json(await deleteById(GuideCollection, req.params.id, 'Guide'));
   },
 });

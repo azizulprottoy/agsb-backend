@@ -1,4 +1,5 @@
-const { ObjectId } = require('mongodb');
+const { optionalRefId } = require('../utils/ids');
+const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
 
 const parseJsonField = (val, fallback) => {
   if (val === undefined || val === null || val === '') return fallback;
@@ -13,7 +14,7 @@ const parseJsonField = (val, fallback) => {
 const buildCheckpointData = (body) => ({
   name_bn: body.name_bn || '',
   name_en: body.name_en,
-  district_id: body.district_id ? new ObjectId(body.district_id) : null,
+  district_id: optionalRefId(body.district_id, 'district_id'),
   type: body.type || 'police',
   lat: Number(body.lat) || 0,
   lng: Number(body.lng) || 0,
@@ -29,35 +30,19 @@ module.exports = ({ CheckpointCollection }) => ({
   },
 
   addCheckpoint: async (req, res) => {
-    try {
-      const newCheckpoint = buildCheckpointData(req.body);
-      const result = await CheckpointCollection.insertOne(newCheckpoint);
-      res.json(result);
-    } catch (err) {
-      console.error('Add checkpoint error:', err);
-      res.status(500).json({ success: false, message: 'Internal server error' });
-    }
+    const newCheckpoint = buildCheckpointData(req.body);
+    const result = await CheckpointCollection.insertOne(newCheckpoint);
+    res.json(insertResponse(result));
   },
 
+  // Only the fields present in the body are changed.
   editCheckpoint: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updatedData = buildCheckpointData(req.body);
-
-      await CheckpointCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
-      res.json({ success: true, message: 'Checkpoint updated successfully', updatedCheckpoint: { _id: id, ...updatedData } });
-    } catch (err) {
-      console.error('Edit checkpoint error:', err);
-      res.status(500).json({ success: false, message: 'Error updating checkpoint' });
-    }
+    const updatedData = pickPresent(buildCheckpointData(req.body), req.body);
+    const updatedCheckpoint = await updateById(CheckpointCollection, req.params.id, updatedData, 'Checkpoint');
+    res.json({ success: true, message: 'Checkpoint updated successfully', updatedCheckpoint });
   },
 
   deleteCheckpoint: async (req, res) => {
-    try {
-      const result = await CheckpointCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, message: 'Error deleting checkpoint' });
-    }
+    res.json(await deleteById(CheckpointCollection, req.params.id, 'Checkpoint'));
   },
 });
