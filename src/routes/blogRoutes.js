@@ -1,10 +1,10 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const blogController = require('../controllers/blogController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadBlog } = require('../middleware/upload');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = blogController(collections);
 
   router.get('/blog', ctrl.getBlogPosts);

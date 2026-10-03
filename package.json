@@ -5,6 +5,9 @@
   "scripts": {
     "start": "node index.js",
     "start-dev": "nodemon index.js",
+    "start-stage": "node -r dotenv/config index.js dotenv_config_path=.env.stage",
+    "start-stage-dev": "nodemon -r dotenv/config index.js dotenv_config_path=.env.stage",
+    "seed:admin:stage": "node -r dotenv/config src/scripts/seedAdmin.js dotenv_config_path=.env.stage",
     "seed:admin": "node src/scripts/seedAdmin.js",
     "seed:content": "node src/scripts/seedContent.js"
   },

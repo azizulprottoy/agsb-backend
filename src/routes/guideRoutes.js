@@ -1,10 +1,10 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const guideController = require('../controllers/guideController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadGuide } = require('../middleware/upload');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = guideController(collections);
 
   router.get('/guides', ctrl.getGuides);

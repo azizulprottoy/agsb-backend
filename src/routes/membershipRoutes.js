@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const membershipController = require('../controllers/membershipController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = membershipController(collections);
 
   router.get('/membership-plans', ctrl.getMembershipPlans);

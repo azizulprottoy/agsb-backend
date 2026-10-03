@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadRichText } = require('../middleware/upload');
 
 module.exports = () => {
-  const router = express.Router();
+  const router = asyncRouter();
 
   router.post('/uploadrichtextimage', verifyToken, requireAdmin, uploadRichText.single('image'), (req, res) => {
     if (!req.file) {

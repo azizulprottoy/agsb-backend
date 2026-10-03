@@ -29,11 +29,12 @@ const checkpointRoutes = require('./src/routes/checkpointRoutes');
 const richTextRoutes = require('./src/routes/richTextRoutes');
 const bookingRoutes = require('./src/routes/bookingRoutes');
 const paymentMethodRoutes = require('./src/routes/paymentMethodRoutes');
+const { createHoldHelpers } = require('./src/controllers/bookingController');
 
-app.use(cors({
-  origin: CORS_ORIGINS,
-  credentials: true,
-}));
+// How often unpaid bookings with an expired seat hold are cancelled.
+const HOLD_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+app.use(cors({ origin: CORS_ORIGINS }));
 
 app.use(express.json());
 
@@ -69,6 +70,29 @@ async function run() {
     app.use('/api', bookingRoutes(collections));
     app.use('/api', paymentMethodRoutes(collections));
 
+    // Release seats held by unpaid bookings whose hold has expired. createBooking
+    // also sweeps its own plan, so this only keeps seat counts fresh in between.
+    const { sweepExpiredHolds } = createHoldHelpers(collections);
+    const sweep = () => sweepExpiredHolds()
+      .then((n) => { if (n) console.log(`Expired ${n} unpaid booking hold(s)`); })
+      .catch((err) => console.error('Booking hold sweep error:', err));
+    sweep();
+    setInterval(sweep, HOLD_SWEEP_INTERVAL_MS).unref();
+
+    // Final error handler: any error passed to next(err) — including rejected
+    // async handlers (see utils/asyncRouter) — gets a JSON response instead of
+    // crashing the process or leaking an HTML stack trace.
+    // eslint-disable-next-line no-unused-vars
+    app.use((err, req, res, next) => {
+      const status = err.status || err.statusCode || (err.name === 'MulterError' ? 400 : 500);
+      if (status >= 500) console.error(`${req.method} ${req.originalUrl}`, err);
+      if (res.headersSent) return;
+      res.status(status).json({
+        success: false,
+        message: status >= 500 ? 'Internal server error' : err.message,
+      });
+    });
+
     app.listen(port, () => {
       console.log(`agsb-backend is running on port: ${port}`);
     });
@@ -76,5 +100,10 @@ async function run() {
     console.error(error);
   }
 }
+
+// Last line of defence: log instead of letting Node terminate the process.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
 
 run().catch(console.dir);

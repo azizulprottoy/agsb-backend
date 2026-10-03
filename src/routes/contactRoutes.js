@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const contactController = require('../controllers/contactController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = contactController(collections);
 
   router.post('/contact', ctrl.submitContact);

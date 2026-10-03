@@ -1,10 +1,10 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const frameController = require('../controllers/frameController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadFrame } = require('../middleware/upload');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = frameController(collections);
 
   router.get('/frames', ctrl.getFrames);

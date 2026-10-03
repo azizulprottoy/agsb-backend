@@ -1,10 +1,10 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const districtAgentController = require('../controllers/districtAgentController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadDistrictAgent } = require('../middleware/upload');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = districtAgentController(collections);
 
   router.get('/district-agents', ctrl.getDistrictAgents);

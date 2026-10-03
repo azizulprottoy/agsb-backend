@@ -1,10 +1,10 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const planController = require('../controllers/planController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 const { uploadPlan } = require('../middleware/upload');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = planController(collections);
 
   router.get('/plans', ctrl.getPlans);

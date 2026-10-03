@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const paymentMethodController = require('../controllers/paymentMethodController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = paymentMethodController(collections);
 
   router.get('/payment-methods', ctrl.getPaymentMethods);

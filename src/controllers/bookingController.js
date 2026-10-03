@@ -4,6 +4,11 @@ const { generateUniqueReferenceCode } = require('../utils/refCode');
 // Share of the total paid online to hold the booking; the rest is paid on arrival.
 const ADVANCE_RATE = 0.4;
 const MAX_TICKETS = 10;
+// How long an unpaid booking holds its seats before the sweep releases them.
+const HOLD_MINUTES = Number(process.env.BOOKING_HOLD_MINUTES) > 0 ? Number(process.env.BOOKING_HOLD_MINUTES) : 60;
+// Limits on unpaid pending bookings, so seats cannot be hoarded without paying.
+const MAX_UNPAID_PER_PLAN = 1;
+const MAX_UNPAID_TOTAL = 3;
 
 const GENDERS = ['male', 'female', 'other'];
 const RELATIONS = ['self', 'spouse', 'parent', 'child', 'sibling', 'relative', 'friend', 'colleague', 'other'];
@@ -41,7 +46,8 @@ const validateTravellers = (travellers, count) => {
 
 const canView = (req, booking) => req.user.role === 'admin' || String(booking.userId) === String(req.user.userId);
 
-module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollection }) => {
+// Shared by the request handlers and the periodic sweep started in index.js.
+const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
   // Give seats back to the plan, reopening it if it had been marked full.
   const releaseSeats = async (planId, count) => {
     await TravelPlanCollection.updateOne(
@@ -54,7 +60,55 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
     );
   };
 
+  // An unpaid pending booking whose hold has run out. Bookings created before
+  // holds existed have no holdExpiresAt and therefore never match.
+  const expiredHoldFilter = (now) => ({
+    paymentStatus: 'unpaid',
+    bookingStatus: 'pending',
+    holdExpiresAt: { $exists: true, $lt: now },
+  });
+
+  // Cancel one expired hold. The conditional update means only one caller can
+  // win, so seats are released exactly once even if sweeps run concurrently.
+  const expireHold = async (booking, now) => {
+    const result = await BookingCollection.updateOne(
+      { _id: booking._id, ...expiredHoldFilter(now) },
+      {
+        $set: { bookingStatus: 'cancelled', cancelReason: 'expired' },
+        $push: { statusHistory: historyEntry('cancelled', 'Payment hold expired') },
+        $unset: { holdExpiresAt: '' },
+      }
+    );
+    if (result.modifiedCount === 1) {
+      await releaseSeats(booking.planId, booking.ticketCount);
+      return true;
+    }
+    return false;
+  };
+
+  // Expire every overdue hold (optionally only for one plan). Returns how many were expired.
+  const sweepExpiredHolds = async (planId) => {
+    const now = new Date().toISOString();
+    const filter = expiredHoldFilter(now);
+    if (planId) filter.planId = planId;
+    const expired = await BookingCollection.find(filter, { projection: { _id: 1, planId: 1, ticketCount: 1 } }).toArray();
+    let count = 0;
+    for (const booking of expired) {
+      if (await expireHold(booking, now)) count++;
+    }
+    return count;
+  };
+
+  return { releaseSeats, expireHold, sweepExpiredHolds };
+};
+
+module.exports = (collections) => {
+  const { BookingCollection, TravelPlanCollection, PaymentMethodCollection } = collections;
+  const { releaseSeats, expireHold, sweepExpiredHolds } = createHoldHelpers(collections);
+
   return {
+    sweepExpiredHolds,
+
     createBooking: async (req, res) => {
       try {
         const { planSlug, note } = req.body;
@@ -75,6 +129,18 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
           return res.status(409).json({ success: false, message: 'This plan is not available for online booking yet' });
         }
 
+        // Free seats held by expired unpaid bookings before checking availability.
+        await sweepExpiredHolds(plan._id);
+
+        const userId = new ObjectId(req.user.userId);
+        const unpaid = { userId, paymentStatus: 'unpaid', bookingStatus: 'pending' };
+        if (await BookingCollection.countDocuments({ ...unpaid, planId: plan._id }) >= MAX_UNPAID_PER_PLAN) {
+          return res.status(409).json({ success: false, message: 'You already have an unpaid booking for this plan — complete its payment first' });
+        }
+        if (await BookingCollection.countDocuments(unpaid) >= MAX_UNPAID_TOTAL) {
+          return res.status(409).json({ success: false, message: `You have ${MAX_UNPAID_TOTAL} unpaid bookings — complete or wait for them to expire before booking again` });
+        }
+
         // Reserve seats atomically so two bookings cannot take the same last seat.
         const hasSeatLimit = typeof plan.seats_available === 'number';
         if (hasSeatLimit) {
@@ -92,11 +158,13 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
 
         const totalAmount = plan.price * ticketCount;
         const advanceAmount = Math.ceil(totalAmount * ADVANCE_RATE);
-        const now = new Date().toISOString();
+        const createdAt = new Date();
+        const now = createdAt.toISOString();
+        const holdExpiresAt = new Date(createdAt.getTime() + HOLD_MINUTES * 60 * 1000).toISOString();
 
         const booking = {
           referenceCode: await generateUniqueReferenceCode(BookingCollection),
-          userId: new ObjectId(req.user.userId),
+          userId,
           userName: req.user.name || '',
           userEmail: req.user.email || '',
           planId: plan._id,
@@ -118,6 +186,7 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
           payment: null,
           statusHistory: [historyEntry('pending', 'Booking created')],
           createdAt: now,
+          holdExpiresAt,
         };
 
         let result;
@@ -128,7 +197,7 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
           throw insertErr;
         }
 
-        res.status(201).json({ success: true, bookingId: result.insertedId, referenceCode: booking.referenceCode });
+        res.status(201).json({ success: true, bookingId: result.insertedId, referenceCode: booking.referenceCode, holdExpiresAt });
       } catch (err) {
         console.error('Create booking error:', err);
         res.status(500).json({ success: false, message: 'Internal server error' });
@@ -163,6 +232,11 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
         if (!['unpaid', 'failed'].includes(booking.paymentStatus)) {
           return res.status(409).json({ success: false, message: 'Payment has already been submitted for this booking' });
         }
+        const holdExpired = () => booking.holdExpiresAt && booking.holdExpiresAt < new Date().toISOString();
+        if (holdExpired()) {
+          await expireHold(booking, new Date().toISOString());
+          return res.status(409).json({ success: false, message: 'Your seat hold expired; please book again' });
+        }
 
         const methodId = toObjectId(req.body.paymentMethodId);
         const method = methodId && await PaymentMethodCollection.findOne({ _id: methodId, active: { $ne: false } });
@@ -191,15 +265,27 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
           submittedAt: new Date().toISOString(),
         };
 
-        // The status filter makes a double submit a no-op instead of overwriting.
+        // The status filter makes a double submit a no-op instead of overwriting,
+        // and also loses to a sweep that cancelled the booking in the meantime.
+        // Removing holdExpiresAt means a booking awaiting verification never expires.
         const result = await BookingCollection.updateOne(
-          { _id: id, paymentStatus: { $in: ['unpaid', 'failed'] } },
+          {
+            _id: id,
+            paymentStatus: { $in: ['unpaid', 'failed'] },
+            bookingStatus: { $ne: 'cancelled' },
+            $or: [{ holdExpiresAt: { $exists: false } }, { holdExpiresAt: { $gte: new Date().toISOString() } }],
+          },
           {
             $set: { payment, paymentStatus: 'pending_verification' },
             $push: { statusHistory: historyEntry('pending_verification', `${method.method} TrxID ${transactionId}`) },
+            $unset: { holdExpiresAt: '' },
           }
         );
         if (!result.modifiedCount) {
+          if (holdExpired()) {
+            await expireHold(booking, new Date().toISOString());
+            return res.status(409).json({ success: false, message: 'Your seat hold expired; please book again' });
+          }
           return res.status(409).json({ success: false, message: 'Payment has already been submitted for this booking' });
         }
         res.json({ success: true, message: 'Payment submitted for verification' });
@@ -271,3 +357,6 @@ module.exports = ({ BookingCollection, TravelPlanCollection, PaymentMethodCollec
     },
   };
 };
+
+module.exports.createHoldHelpers = createHoldHelpers;
+module.exports.HOLD_MINUTES = HOLD_MINUTES;

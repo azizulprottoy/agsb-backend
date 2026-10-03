@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const divisionController = require('../controllers/divisionController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = divisionController(collections);
 
   router.get('/divisions', ctrl.getDivisions);

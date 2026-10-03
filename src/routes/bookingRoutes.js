@@ -1,9 +1,9 @@
-const express = require('express');
+const { asyncRouter } = require('../utils/asyncRouter');
 const bookingController = require('../controllers/bookingController');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 module.exports = (collections) => {
-  const router = express.Router();
+  const router = asyncRouter();
   const ctrl = bookingController(collections);
 
   router.post('/bookings', verifyToken, ctrl.createBooking);

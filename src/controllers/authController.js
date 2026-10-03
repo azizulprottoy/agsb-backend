@@ -2,23 +2,34 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config/constants');
 
+// Case-insensitive match so existing mixed-case accounts can still sign in.
+const EMAIL_COLLATION = { locale: 'en', strength: 2 };
+const INVALID_CREDENTIALS = 'Invalid email or password';
+// Compared against when the email is unknown so both failure paths take similar time.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
+
+// Returns { email, password } or null when either is missing or not a string
+// (objects like {"$ne": null} would otherwise be run as query operators).
+const readCredentials = (body) => {
+  const { email, password } = body || {};
+  if (typeof email !== 'string' || typeof password !== 'string') return null;
+  const trimmed = email.trim();
+  if (!trimmed || !password) return null;
+  return { email: trimmed, password };
+};
+
 module.exports = ({ AdminCollection, UserCollection }) => ({
   adminLogin: async (req, res) => {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
+    const creds = readCredentials(req.body);
+    if (!creds) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
     try {
-      const admin = await AdminCollection.findOne({ email });
-      if (!admin) {
-        return res.status(404).json({ success: false, message: 'Admin not found' });
-      }
-
-      const match = await bcrypt.compare(password, admin.passwordHash);
-      if (!match) {
-        return res.status(401).json({ success: false, message: 'Invalid password' });
+      const admin = await AdminCollection.findOne({ email: creds.email }, { collation: EMAIL_COLLATION });
+      const match = await bcrypt.compare(creds.password, admin?.passwordHash || DUMMY_HASH);
+      if (!admin || !match) {
+        return res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
       }
 
       const token = jwt.sign(
@@ -40,14 +51,20 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
   },
 
   signup: async (req, res) => {
-    const { name, email, phone, password, district } = req.body;
+    const { name, phone, district } = req.body || {};
+    const creds = readCredentials(req.body);
 
-    if (!name || !email || !password) {
+    if (!name || !creds) {
       return res.status(400).json({ success: false, message: 'Name, email and password are required' });
     }
+    if (typeof name !== 'string' || (phone != null && typeof phone !== 'string') || (district != null && typeof district !== 'string')) {
+      return res.status(400).json({ success: false, message: 'Invalid signup details' });
+    }
+    const email = creds.email.toLowerCase();
+    const { password } = creds;
 
     try {
-      const existing = await UserCollection.findOne({ email });
+      const existing = await UserCollection.findOne({ email }, { collation: EMAIL_COLLATION });
       if (existing) {
         return res.status(409).json({ success: false, message: 'An account with this email already exists' });
       }
@@ -86,21 +103,16 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
   },
 
   login: async (req, res) => {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
+    const creds = readCredentials(req.body);
+    if (!creds) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
     try {
-      const user = await UserCollection.findOne({ email });
-      if (!user) {
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-
-      const match = await bcrypt.compare(password, user.passwordHash);
-      if (!match) {
-        return res.status(401).json({ success: false, message: 'Invalid password' });
+      const user = await UserCollection.findOne({ email: creds.email }, { collation: EMAIL_COLLATION });
+      const match = await bcrypt.compare(creds.password, user?.passwordHash || DUMMY_HASH);
+      if (!user || !match) {
+        return res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
       }
 
       const token = jwt.sign(
