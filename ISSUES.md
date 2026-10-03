@@ -333,7 +333,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
 
 ## Low
 
-### 36. JWT weaknesses
+### 36.-done JWT weaknesses
 - **Where:** `BE` src/middleware/auth.js:13-18 · authController.js:24-27, 133-135
 - **Problem:**
   - Tokens can't be revoked (admin 12 h, user 7 d).
@@ -346,7 +346,7 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Have `/me` read from the database.
   - Add a CSP; longer term, move tokens to httpOnly cookies.
 
-### 37. Admin route guard is weak
+### 37.-done Admin route guard is weak
 - **Where:** `AD` src/Layout/Main.jsx:12-27 · src/Layout/Auth/Login.jsx
 - **Problem:**
   - The guard renders `<Outlet/>` before its redirect effect runs.
@@ -354,22 +354,22 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - The login page doesn't redirect a user who is already logged in, and has no loading state.
 - **Fix:** Return `<Navigate to="/login">` when there is no user, and check `user.role === 'admin'`. The server still enforces auth, so this is defense in depth.
 
-### 38. Booking reference code is generated outside the seat rollback
+### 38.-done Booking reference code is generated outside the seat rollback
 - **Where:** `BE` bookingController.js:98 vs. 124-129
 - **Effect:** A database error at that step leaves seats reserved with no booking.
 - **Fix:** Generate the code before reserving seats, or move it inside the try block that releases them.
 
-### 39. Plans with no `status` field can never be booked
+### 39.-done Plans with no `status` field can never be booked
 - **Where:** `BE` bookingController.js:71 vs. 82
 - **Problem:** The pre-check treats a missing `status` as `open`, but the reservation filter requires `status: 'open'` exactly.
 - **Fix:** Use `status: { $in: ['open', null] }`, or backfill the field.
 
-### 40. Bookings are accepted for trips that have already started
+### 40.-done Bookings are accepted for trips that have already started
 - **Where:** `BE` bookingController.js:69
 - **Problem:** Past `start_date` values are not rejected, and `planSlug` is not type-checked.
 - **Fix:** Reject past start dates and coerce the slug with `String(planSlug)`.
 
-### 41. Weak signup and profile validation
+### 41.-done Weak signup and profile validation
 - **Where:** `BE` authController.js:42-55 · profileController.js:20-33
 - **Problem:**
   - Signup has no email format check and no minimum password length on the server; the 6-character rule is client-only.
@@ -377,45 +377,45 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - An admin token on `PATCH /profile` returns 500.
 - **Fix:** Validate types and formats, require a password of at least 8 characters, cap `visitedDistricts`, and return 404 when no user is found.
 
-### 42. Contact status accepts any value
+### 42.-done Contact status accepts any value
 - **Where:** `BE` contactController.js:38-40
 - **Problem:** Any value is accepted, and an unknown ID never returns 404. The admin sends `new`, `read` and `resolved`.
 - **Fix:** Whitelist `['new', 'read', 'resolved']` and return 404 when no message matches.
 
-### 43. Inactive payment methods are publicly listed
+### 43.-done Inactive payment methods are publicly listed
 - **Where:** `BE` paymentMethodController.js:13
 - **Problem:** `GET /payment-methods?all=1` is public and includes inactive methods.
 - **Fix:** Move the full list to an admin-only route.
 
-### 44. Uploaded files are never deleted
+### 44.-done Uploaded files are never deleted
 - **Where:** `BE` every `deleteX` controller, every `editX` that replaces an image, and planController.js:76 (the upload is kept even when validation returns 400)
 - **Verified:** Runtime. Deleted records' images stay on disk.
 - **Fix:** On delete or replace, `fs.unlink` the old file (after checking the resolved path is inside `uploads/`), and delete `req.file` when a request fails validation.
 
-### 45. Deletes don't check what references the record
+### 45.-done Deletes don't check what references the record
 - **Where:** `BE` deleteDistrict, deleteDivision, deletePlan
 - **Effect:**
   - Hotels, guides, agents, checkpoints and transports keep pointing at a deleted district.
   - Bookings keep pointing at a deleted plan, and cancelling them later releases no seats.
 - **Fix:** Block the delete while references exist, or switch to soft-delete.
 
-### 46. Edit responses are incomplete
+### 46.-done Edit responses are incomplete
 - **Where:** `BE` every `editX` response (e.g. hotelController.js:54)
 - **Problem:** When no new file is uploaded, the returned object has no `image` key, and its `_id` is a string.
 - **Fix:** Return the document from `findOneAndUpdate({ returnDocument: 'after' })`.
 
-### 47. Content seed script wipes collections without a guard
+### 47.-done Content seed script wipes collections without a guard
 - **Where:** `BE` src/scripts/seedContent.js:153-160
 - **Problem:** It runs `deleteMany({})` on 6 collections with no environment check, and the seeded plans have no `price`, `status` or `seats_available`, so they can't be booked.
 - **Fix:** Require a `--force` flag, refuse to run when `NODE_ENV=production`, and seed the booking fields.
 
-### 48. Admin edit forms can save the literal string "undefined"
+### 48.-done Admin edit forms can save the literal string "undefined"
 - **Where:** `AD` Partners.jsx:27, Frames.jsx:25, and `toFormState` in Districts, Hotels, Transport and DistrictAgents
 - **Problem:** The row is spread into form state without defaults.
 - **Effect:** For any record missing a field, the string `"undefined"` is sent in the FormData and stored.
 - **Fix:** Merge with the empty form first: `{ ...empty, ...row }`, as Blog does.
 
-### 49. Rich-text editor problems
+### 49.-done Rich-text editor problems
 - **Where:** `AD` src/components/RichTextEditor.jsx:288-289, 399
 - **Problem:**
   - An inserted image can't be removed with Backspace or Delete (seen at runtime).
@@ -423,25 +423,25 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - Image upload failures are only logged to the console.
 - **Fix:** Handle deleting a selected image, run the setup once, and show upload errors to the admin.
 
-### 50. Admin memory leak and stale-closure bugs
+### 50.-done Admin memory leak and stale-closure bugs
 - **Where:** `AD` src/components/FileInput.jsx:15, 33 · Contact.jsx:15
 - **Problem:**
   - `URL.createObjectURL` runs on every render and is never revoked; the remounting in #1 makes this worse.
   - `setRows(rows.map(...))` runs after an `await`, so two quick status changes lose one of them.
 - **Fix:** Create the object URL in `useMemo` / `useEffect` and revoke it in cleanup. Use the functional form `setRows(prev => ...)`.
 
-### 51. Admin uses `apiSend` for GET requests
+### 51.-done Admin uses `apiSend` for GET requests
 - **Where:** `AD` every `refresh()`
 - **Problem:** `apiSend` adds a `Content-Type` header, which forces a CORS preflight and triggers the lint warning. On error the list is set to `[]`, so it silently empties.
 - **Fix:** Use `apiGet` and show the error instead of clearing the list.
 
-### 52. Accessibility gaps in both frontends
+### 52.-done Accessibility gaps in both frontends
 - **Where:**
   - `AD`: labels have no `htmlFor` / `id`. `Modal.jsx` has no `role="dialog"`, no Esc to close, no focus trap, and an unlabelled × button. Sidebar.jsx:71 removes the focus outline. Action cells use `<td className="flex">`.
   - `WEB`: icon-only buttons have no `aria-label` (Navbar.jsx:59, 68 · Footer.jsx:21-24); the menu toggle has no `aria-expanded`; map districts are clickable `<g>` elements with no role, `tabIndex` or keyboard handler (MapPage.jsx:52-58, ProfilePage.jsx:156).
 - **Fix:** Add labels and roles, make the map markers keyboard-operable, and offer a list fallback for the map.
 
-### 53. Smaller public-site bugs
+### 53.-done Smaller public-site bugs
 - **Where:** `WEB`
 - **Problems:**
   - `useFetch.js:9-20`: when the path changes, the previous page's data or error shows for one render.
@@ -456,17 +456,17 @@ Paths are relative to each repo root. `BE` = agsb-backend, `AD` = agsb-admin, `W
   - After payment submit, the spinner stays up for more than 2 s even though the backend has already saved the payment (runtime).
 - **Fix:** Fix each of these individually.
 
-### 54. Images are not optimized
+### 54.-done Images are not optimized
 - **Where:** `WEB` card and hero images (Home, Plans, Frames, detail pages)
 - **Problem:** No `loading="lazy"`, and no `width` / `height`, which causes layout shift. Unsplash URLs are fixed at `?w=600`, even for full-width heroes.
 - **Fix:** Add `loading="lazy"` and explicit dimensions, and use `srcset`.
 
-### 55. Minor admin UI issues
+### 55.-done Minor admin UI issues
 - **Where:** `AD` Contact.jsx:45 · src/components/ConfirmDelete.js
 - **Problem:** The `createdAt` date is shown as a raw ISO string, and the SweetAlert dialog uses a dark theme inside the light daisyUI theme.
 - **Fix:** Format the date, and match the dialog theme to the app.
 
-### 56. Dead code, unused dependencies and maintainability
+### 56.-done Dead code, unused dependencies and maintainability
 - **Where:** all three repos
 - **Problem:**
   - **Site:** `leaflet` / `react-leaflet` are installed but never used; `public/assets/BD_Map_admin.svg` (102 KB) ships but is unused; 8 unused imports are flagged by lint; `TOKEN_KEY` is exported but unused.

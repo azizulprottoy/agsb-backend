@@ -1,6 +1,17 @@
 const { toPublicUrl } = require('../utils/paths');
 const { sanitizeRichText } = require('../utils/sanitizeHtml');
 const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
+const { removeUpload } = require('../utils/files');
+
+const RICHTEXT_PATH = /\/uploads\/richtext\/[A-Za-z0-9._-]+/g;
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// '/uploads/richtext/...' paths referenced in a post's HTML fields.
+const richTextPaths = (post) => [...new Set(
+  [post.content, post.excerpt]
+    .filter((html) => typeof html === 'string')
+    .flatMap((html) => html.match(RICHTEXT_PATH) || [])
+)];
 
 const buildBlogData = (body) => ({
   title_bn: body.title_bn,
@@ -14,7 +25,7 @@ const buildBlogData = (body) => ({
   districtSlug: body.districtSlug || '',
 });
 
-module.exports = ({ BlogCollection }) => ({
+module.exports = ({ BlogCollection, TravelPlanCollection }) => ({
   getBlogPosts: async (req, res) => {
     const result = await BlogCollection.find().sort({ date: -1 }).toArray();
     res.json(result.map((b) => ({ ...b, image: toPublicUrl(b.image) })));
@@ -48,6 +59,19 @@ module.exports = ({ BlogCollection }) => ({
   },
 
   deleteBlogPost: async (req, res) => {
-    res.json(await deleteById(BlogCollection, req.params.id, 'Blog post'));
+    // Also removes inline rich-text images of the deleted post that no other
+    // blog post or travel plan still references.
+    res.json(await deleteById(BlogCollection, req.params.id, 'Blog post', {
+      onDeleted: async (post) => {
+        for (const publicPath of richTextPaths(post)) {
+          const re = new RegExp(escapeRegex(publicPath.split('/').pop()));
+          const [posts, plans] = await Promise.all([
+            BlogCollection.countDocuments({ $or: [{ content: re }, { excerpt: re }, { image: re }] }),
+            TravelPlanCollection.countDocuments({ $or: [{ description_bn: re }, { description_en: re }, { image: re }] }),
+          ]);
+          if (!posts && !plans) await removeUpload(publicPath);
+        }
+      },
+    }));
   },
 });

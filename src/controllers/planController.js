@@ -58,7 +58,7 @@ const buildPlanData = (body) => ({
   status: PLAN_STATUSES.includes(body.status) ? body.status : 'open',
 });
 
-module.exports = ({ TravelPlanCollection }) => ({
+module.exports = ({ TravelPlanCollection, BookingCollection }) => ({
   getPlans: async (req, res) => {
     const result = await TravelPlanCollection.find().sort({ _id: -1 }).toArray();
     res.json(result.map((p) => ({ ...p, image: toPublicUrl(p.image) })));
@@ -106,6 +106,17 @@ module.exports = ({ TravelPlanCollection }) => ({
   },
 
   deletePlan: async (req, res) => {
-    res.json(await deleteById(TravelPlanCollection, req.params.id, 'Travel plan'));
+    // Blocked while the plan has bookings that are still open.
+    res.json(await deleteById(TravelPlanCollection, req.params.id, 'Travel plan', {
+      guard: async (plan) => {
+        const active = await BookingCollection.countDocuments({
+          planId: { $in: [plan._id, String(plan._id)] },
+          bookingStatus: { $nin: ['cancelled', 'completed'] },
+        });
+        if (active) {
+          throw httpError(409, `This plan has ${active} active booking${active === 1 ? '' : 's'}. Cancel or complete them before deleting it.`);
+        }
+      },
+    }));
   },
 });

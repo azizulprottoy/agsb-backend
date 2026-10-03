@@ -1,6 +1,10 @@
+require('dotenv').config();
+// Fail fast on missing/weak config before any module reads it.
+require('./src/utils/configCheck').assertConfig();
+
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
+const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -9,7 +13,7 @@ const port = process.env.PORT || 5000;
 const { CORS_ORIGINS } = require('./src/config/constants');
 const { isDuplicateKeyError, duplicateKeyMessage } = require('./src/utils/http');
 const { MAX_FILE_SIZE } = require('./src/middleware/upload');
-const { connectDB } = require('./src/config/db');
+const { connectDB, client } = require('./src/config/db');
 
 const authRoutes = require('./src/routes/authRoutes');
 const profileRoutes = require('./src/routes/profileRoutes');
@@ -32,13 +36,29 @@ const richTextRoutes = require('./src/routes/richTextRoutes');
 const bookingRoutes = require('./src/routes/bookingRoutes');
 const paymentMethodRoutes = require('./src/routes/paymentMethodRoutes');
 const { createHoldHelpers } = require('./src/controllers/bookingController');
+const { initAuth } = require('./src/middleware/auth');
 
 // How often unpaid bookings with an expired seat hold are cancelled.
 const HOLD_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+// How long a shutdown waits for in-flight requests before exiting anyway.
+const SHUTDOWN_TIMEOUT_MS = 10 * 1000;
 
+// Security headers (also drops X-Powered-By). The API only returns JSON, and
+// uploads set their own CSP below; the frontends live on other origins, so
+// they must be allowed to load images from here.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: CORS_ORIGINS }));
 
 app.use(express.json());
+
+// Any failed request (4xx/5xx, thrown or returned directly) must not leave the
+// file multer stored for it behind in uploads/.
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode >= 400 && req.file?.path) fs.unlink(req.file.path, () => {});
+  });
+  next();
+});
 
 const uploadDirectory = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDirectory)) {
@@ -48,6 +68,7 @@ if (!fs.existsSync(uploadDirectory)) {
 async function run() {
   try {
     const collections = await connectDB();
+    initAuth(collections);
 
     // Uploaded files are user-supplied: never let a browser sniff them into
     // HTML/script, and never let one run as a page on the API origin.
@@ -86,7 +107,8 @@ async function run() {
       .then((n) => { if (n) console.log(`Expired ${n} unpaid booking hold(s)`); })
       .catch((err) => console.error('Booking hold sweep error:', err));
     sweep();
-    setInterval(sweep, HOLD_SWEEP_INTERVAL_MS).unref();
+    const sweepTimer = setInterval(sweep, HOLD_SWEEP_INTERVAL_MS);
+    sweepTimer.unref();
 
     // Anything no route matched gets a JSON 404 instead of Express's HTML page.
     app.use((req, res) => {
@@ -98,9 +120,6 @@ async function run() {
     // crashing the process or leaking an HTML stack trace.
     // eslint-disable-next-line no-unused-vars
     app.use((err, req, res, next) => {
-      // A request that failed after multer stored its upload must not leave an orphan file.
-      if (req.file?.path) fs.unlink(req.file.path, () => {});
-
       let status = Number(err.status || err.statusCode) || 500;
       let { message } = err;
       if (err.name === 'MulterError') {
@@ -125,9 +144,26 @@ async function run() {
       });
     });
 
-    app.listen(port, () => {
+    const server = app.listen(port, () => {
       console.log(`agsb-backend is running on port: ${port}`);
     });
+
+    // Graceful shutdown: stop taking requests, let in-flight ones finish, then
+    // close the database connection. Forced exit if that takes too long.
+    let shuttingDown = false;
+    const shutdown = (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`${signal} received, shutting down`);
+      clearInterval(sweepTimer);
+      setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
+      server.close(async () => {
+        await client.close().catch((err) => console.error('Error closing database connection:', err));
+        process.exit(0);
+      });
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
     console.error(error);
   }

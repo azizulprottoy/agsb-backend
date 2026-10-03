@@ -4,3 +4,9 @@ uploads/*
 !uploads/.gitkeep
 .env.*
 !.env.example
+
+# OS / editor files
+.DS_Store
+.sf/
+.vscode/
+.idea/

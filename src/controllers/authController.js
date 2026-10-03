@@ -1,6 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('../config/constants');
+const { toObjectId } = require('../utils/ids');
+const {
+  validateName, validateEmail, validateNewPassword, validateOptionalPhone, validateOptionalDistrict,
+} = require('../utils/authValidation');
 
 // Case-insensitive match so existing mixed-case accounts can still sign in.
 const EMAIL_COLLATION = { locale: 'en', strength: 2 };
@@ -18,6 +22,25 @@ const readCredentials = (body) => {
   return { email: trimmed, password };
 };
 
+// `tv` is the account's tokenVersion at issue time; verifyToken rejects the
+// token once the account's tokenVersion moves on (see logoutAll).
+const signToken = (account, role) => jwt.sign(
+  { userId: account._id, email: account.email, name: account.name, role, tv: Number(account.tokenVersion) || 0 },
+  JWT_SECRET,
+  { expiresIn: role === 'admin' ? '12h' : '7d' }
+);
+
+const publicUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  district: user.district,
+  plan: user.plan,
+  joined: user.joined,
+  visitedDistricts: user.visitedDistricts || [],
+});
+
 module.exports = ({ AdminCollection, UserCollection }) => ({
   adminLogin: async (req, res) => {
     const creds = readCredentials(req.body);
@@ -32,11 +55,7 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
         return res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
       }
 
-      const token = jwt.sign(
-        { userId: admin._id, email: admin.email, name: admin.name, role: 'admin' },
-        JWT_SECRET,
-        { expiresIn: '12h' }
-      );
+      const token = signToken(admin, 'admin');
 
       return res.status(200).json({
         success: true,
@@ -51,17 +70,22 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
   },
 
   signup: async (req, res) => {
-    const { name, phone, district } = req.body || {};
-    const creds = readCredentials(req.body);
-
-    if (!name || !creds) {
+    const body = req.body || {};
+    if (!body.name || !readCredentials(body)) {
       return res.status(400).json({ success: false, message: 'Name, email and password are required' });
     }
-    if (typeof name !== 'string' || (phone != null && typeof phone !== 'string') || (district != null && typeof district !== 'string')) {
-      return res.status(400).json({ success: false, message: 'Invalid signup details' });
-    }
-    const email = creds.email.toLowerCase();
-    const { password } = creds;
+    const checks = {
+      name: validateName(body.name),
+      email: validateEmail(body.email),
+      password: validateNewPassword(body.password),
+      phone: validateOptionalPhone(body.phone),
+      district: validateOptionalDistrict(body.district),
+    };
+    const failed = Object.values(checks).find((c) => c.error);
+    if (failed) return res.status(400).json({ success: false, message: failed.error });
+    const name = checks.name.value;
+    const email = checks.email.value;
+    const password = checks.password.value;
 
     try {
       const existing = await UserCollection.findOne({ email }, { collation: EMAIL_COLLATION });
@@ -74,9 +98,10 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
       const newUser = {
         name,
         email,
-        phone: phone || '',
-        district: district || '',
+        phone: checks.phone.value,
+        district: checks.district.value,
         passwordHash,
+        tokenVersion: 0,
         plan: 'Free',
         joined: new Date().toISOString().slice(0, 10),
         visitedDistricts: [],
@@ -84,17 +109,14 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
 
       const result = await UserCollection.insertOne(newUser);
 
-      const token = jwt.sign(
-        { userId: result.insertedId, email, name, role: 'user' },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
+      const created = { ...newUser, _id: result.insertedId };
+      const token = signToken(created, 'user');
 
       return res.status(201).json({
         success: true,
         message: 'Signup successful',
         token,
-        user: { id: result.insertedId, name, email, phone: newUser.phone, district: newUser.district, plan: newUser.plan, joined: newUser.joined, visitedDistricts: [] },
+        user: publicUser(created),
       });
     } catch (err) {
       // Lost a race with a concurrent signup for the same email (unique index).
@@ -119,26 +141,13 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
         return res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
       }
 
-      const token = jwt.sign(
-        { userId: user._id, email: user.email, name: user.name, role: 'user' },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
+      const token = signToken(user, 'user');
 
       return res.status(200).json({
         success: true,
         message: 'Login successful',
         token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          district: user.district,
-          plan: user.plan,
-          joined: user.joined,
-          visitedDistricts: user.visitedDistricts || [],
-        },
+        user: publicUser(user),
       });
     } catch (err) {
       console.error('Login error:', err);
@@ -146,7 +155,30 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
     }
   },
 
+  // Fresh account data from the database (never the token's copy).
   me: async (req, res) => {
-    res.json({ success: true, user: req.user });
+    const isAdmin = req.user.role === 'admin';
+    const collection = isAdmin ? AdminCollection : UserCollection;
+    const account = await collection.findOne(
+      { _id: toObjectId(req.user.userId) },
+      { projection: { passwordHash: 0, tokenVersion: 0 } }
+    );
+    if (!account) return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    const user = isAdmin
+      ? { id: account._id, userId: account._id, name: account.name, email: account.email, role: 'admin' }
+      : { ...publicUser(account), userId: account._id, role: 'user' };
+    res.json({ success: true, user });
+  },
+
+  // Revoke every token issued to the caller (all devices). The caller's own
+  // token stops working too; the client should discard it and log in again.
+  logoutAll: async (req, res) => {
+    const collection = req.user.role === 'admin' ? AdminCollection : UserCollection;
+    const result = await collection.updateOne(
+      { _id: toObjectId(req.user.userId) },
+      { $inc: { tokenVersion: 1 } }
+    );
+    if (!result.matchedCount) return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    res.json({ success: true, message: 'Logged out from all devices' });
   },
 });

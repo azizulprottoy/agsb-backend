@@ -52,6 +52,20 @@ const validateTravellers = (travellers, count) => {
   return { travellers: cleaned };
 };
 
+// Today's date (YYYY-MM-DD) in Bangladesh, where all trips take place.
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+const todayInDhaka = () => new Date(Date.now() + DHAKA_OFFSET_MS).toISOString().slice(0, 10);
+
+// A trip whose start date is before today has already started. Plans without
+// a usable YYYY-MM-DD start date are not restricted.
+const hasStarted = (plan) => {
+  const start = typeof plan.start_date === 'string' ? plan.start_date.slice(0, 10) : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(start) && start < todayInDhaka();
+};
+
+// Plans created before `status` existed have none; treat that as open.
+const OPEN_STATUS = { $in: ['open', null] };
+
 const canView = (req, booking) => req.user.role === 'admin' || String(booking.userId) === String(req.user.userId);
 
 // Shared by the request handlers and the periodic sweep started in index.js.
@@ -119,7 +133,9 @@ module.exports = (collections) => {
 
     createBooking: async (req, res) => {
       try {
-        const { planSlug, note } = req.body;
+        const { note } = req.body;
+        const planSlug = req.body.planSlug == null || typeof req.body.planSlug === 'object' ? '' : String(req.body.planSlug).trim();
+        if (!planSlug) return res.status(400).json({ success: false, message: 'Select a travel plan' });
         const ticketCount = Number(req.body.ticketCount);
 
         if (!Number.isInteger(ticketCount) || ticketCount < 1 || ticketCount > MAX_TICKETS) {
@@ -132,6 +148,9 @@ module.exports = (collections) => {
         if (!plan) return res.status(404).json({ success: false, message: 'Travel plan not found' });
         if ((plan.status || 'open') !== 'open') {
           return res.status(409).json({ success: false, message: 'Booking is not open for this plan' });
+        }
+        if (hasStarted(plan)) {
+          return res.status(409).json({ success: false, message: 'This trip has already started' });
         }
         if (!(plan.price > 0)) {
           return res.status(409).json({ success: false, message: 'This plan is not available for online booking yet' });
@@ -149,11 +168,14 @@ module.exports = (collections) => {
           return res.status(409).json({ success: false, message: `You have ${MAX_UNPAID_TOTAL} unpaid bookings — complete or wait for them to expire before booking again` });
         }
 
+        // Generated before any seats are reserved, so a failure here cannot leak seats.
+        const referenceCode = await generateUniqueReferenceCode(BookingCollection);
+
         // Reserve seats atomically so two bookings cannot take the same last seat.
         const hasSeatLimit = typeof plan.seats_available === 'number';
         if (hasSeatLimit) {
           const reserved = await TravelPlanCollection.updateOne(
-            { _id: plan._id, status: 'open', seats_available: { $gte: ticketCount } },
+            { _id: plan._id, status: OPEN_STATUS, seats_available: { $gte: ticketCount } },
             { $inc: { seats_available: -ticketCount } }
           );
           if (!reserved.modifiedCount) {
@@ -161,7 +183,7 @@ module.exports = (collections) => {
             const left = fresh?.seats_available ?? 0;
             return res.status(409).json({ success: false, message: left > 0 ? `Only ${left} seat${left === 1 ? '' : 's'} left` : 'This plan is fully booked' });
           }
-          await TravelPlanCollection.updateOne({ _id: plan._id, seats_available: 0, status: 'open' }, { $set: { status: 'full' } });
+          await TravelPlanCollection.updateOne({ _id: plan._id, seats_available: 0, status: OPEN_STATUS }, { $set: { status: 'full' } });
         }
 
         const totalAmount = plan.price * ticketCount;
@@ -171,7 +193,7 @@ module.exports = (collections) => {
         const holdExpiresAt = new Date(createdAt.getTime() + HOLD_MINUTES * 60 * 1000).toISOString();
 
         const booking = {
-          referenceCode: await generateUniqueReferenceCode(BookingCollection),
+          referenceCode,
           userId,
           userName: req.user.name || '',
           userEmail: req.user.email || '',
@@ -232,7 +254,19 @@ module.exports = (collections) => {
       try {
         const id = toObjectId(req.params.id);
         if (!id) return invalidId(res);
-        const booking = await BookingCollection.findOne({ _id: id });
+        const methodId = toObjectId(req.body.paymentMethodId);
+        const senderNumber = String(req.body.senderNumber || '').replace(/[\s-]/g, '');
+        const transactionId = String(req.body.transactionId || '').trim().toUpperCase();
+
+        // Independent lookups run together (one round trip instead of three);
+        // their results are still checked in the original order below.
+        const [booking, method, reused] = await Promise.all([
+          BookingCollection.findOne({ _id: id }),
+          methodId ? PaymentMethodCollection.findOne({ _id: methodId, active: { $ne: false } }) : null,
+          TRX_ID.test(transactionId)
+            ? BookingCollection.findOne({ 'payment.transactionId': transactionId, _id: { $ne: id } }, { projection: { _id: 1 } })
+            : null,
+        ]);
         if (!booking || String(booking.userId) !== String(req.user.userId)) {
           return res.status(404).json({ success: false, message: 'Booking not found' });
         }
@@ -248,19 +282,14 @@ module.exports = (collections) => {
           return res.status(409).json({ success: false, message: 'Your seat hold expired; please book again' });
         }
 
-        const methodId = toObjectId(req.body.paymentMethodId);
-        const method = methodId && await PaymentMethodCollection.findOne({ _id: methodId, active: { $ne: false } });
         if (!method) return res.status(400).json({ success: false, message: 'Select a payment method' });
 
-        const senderNumber = String(req.body.senderNumber || '').replace(/[\s-]/g, '');
-        const transactionId = String(req.body.transactionId || '').trim().toUpperCase();
         if (!BD_PHONE.test(senderNumber)) {
           return res.status(400).json({ success: false, message: 'Enter the number you sent the money from' });
         }
         if (!TRX_ID.test(transactionId)) {
           return res.status(400).json({ success: false, message: 'Enter a valid transaction ID' });
         }
-        const reused = await BookingCollection.findOne({ 'payment.transactionId': transactionId, _id: { $ne: id } });
         if (reused) {
           return res.status(409).json({ success: false, message: 'This transaction ID has already been used' });
         }

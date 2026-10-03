@@ -8,10 +8,15 @@ const buildMethodData = (body) => ({
 });
 
 module.exports = ({ PaymentMethodCollection }) => ({
-  // Public list only shows active methods; admins see all with ?all=1.
+  // Public list: active methods only (query params are ignored).
   getPaymentMethods: async (req, res) => {
-    const filter = req.query.all ? {} : { active: { $ne: false } };
-    const result = await PaymentMethodCollection.find(filter).sort({ _id: 1 }).toArray();
+    const result = await PaymentMethodCollection.find({ active: { $ne: false } }).sort({ _id: 1 }).toArray();
+    res.json(result);
+  },
+
+  // Admin list (GET /payment-methods/admin): every method, inactive included.
+  getAllPaymentMethods: async (req, res) => {
+    const result = await PaymentMethodCollection.find().sort({ _id: 1 }).toArray();
     res.json(result);
   },
 

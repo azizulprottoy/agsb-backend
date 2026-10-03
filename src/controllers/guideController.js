@@ -1,16 +1,7 @@
 const { toPublicUrl } = require('../utils/paths');
 const { refIdArray } = require('../utils/ids');
 const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
-
-const parseJsonField = (val, fallback) => {
-  if (val === undefined || val === null || val === '') return fallback;
-  if (typeof val !== 'string') return val;
-  try {
-    return JSON.parse(val);
-  } catch {
-    return fallback;
-  }
-};
+const { parseJsonField } = require('../utils/json');
 
 const buildGuideData = (body) => ({
   name: body.name,

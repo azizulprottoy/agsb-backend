@@ -1,4 +1,4 @@
-const { pickPresent, insertResponse, updateById, deleteById } = require('../utils/crud');
+const { pickPresent, insertResponse, updateById, deleteById, assertUnreferenced } = require('../utils/crud');
 
 const buildDivisionData = (body) => ({
   name_bn: body.name_bn,
@@ -8,7 +8,7 @@ const buildDivisionData = (body) => ({
   districtCount: Number(body.districtCount) || 0,
 });
 
-module.exports = ({ DivisionCollection }) => ({
+module.exports = ({ DivisionCollection, DistrictCollection }) => ({
   getDivisions: async (req, res) => {
     const result = await DivisionCollection.find().sort({ name_en: 1 }).toArray();
     res.json(result);
@@ -27,6 +27,13 @@ module.exports = ({ DivisionCollection }) => ({
   },
 
   deleteDivision: async (req, res) => {
-    res.json(await deleteById(DivisionCollection, req.params.id, 'Division'));
+    // Blocked while districts still belong to this division.
+    res.json(await deleteById(DivisionCollection, req.params.id, 'Division', {
+      guard: async (division) => {
+        const ids = [division._id, String(division._id)];
+        const districts = await DistrictCollection.countDocuments({ division_id: { $in: ids } });
+        assertUnreferenced('division', [[districts, 'district', 'districts']]);
+      },
+    }));
   },
 });

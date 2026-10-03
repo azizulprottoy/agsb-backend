@@ -140,7 +140,30 @@ const membershipPlans = [
   { name: "Annual", price: "৳999", period: "/year", desc: "Best value — save ৳1,389", features: ["Everything in Premium", "2 months free", "Exclusive annual member badge", "20% partner discounts", "Featured traveller spotlight"], cta: "Go Annual", popular: false, order: 2 },
 ];
 
+// Lower bound of a cost range like "৳3,500–৳5,000" -> 3500 (null if none).
+const startingPrice = (cost) => {
+  const match = String(cost || '').match(/\d[\d,]*/);
+  return match ? Number(match[0].replace(/,/g, '')) : null;
+};
+
+const SEED_SEATS = 20;
+
+// This script deletes every division, district, blog post, travel plan,
+// partner and membership plan before inserting the demo content.
+const assertSafeToRun = () => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusing to seed: NODE_ENV=production. This script wipes content collections.');
+    process.exit(1);
+  }
+  if (!process.argv.includes('--force')) {
+    console.error(`This deletes all divisions, districts, blog posts, travel plans, partners and membership plans in database "${process.env.MONGO_DB_NAME || '(default)'}".`);
+    console.error('Re-run with --force to continue:  npm run seed:content -- --force');
+    process.exit(1);
+  }
+};
+
 async function seed() {
+  assertSafeToRun();
   const {
     DivisionCollection,
     DistrictCollection,
@@ -172,8 +195,15 @@ async function seed() {
   const blogDocs = blogPosts.map((b) => ({ ...b, content: b.excerpt }));
   const blogResult = await BlogCollection.insertMany(blogDocs);
 
+  // Booking fields so seeded plans can actually be booked (no dates = no
+  // start-date restriction).
   const planDocs = travelPlans.map((p) => ({
     ...p,
+    price: startingPrice(p.cost),
+    status: 'open',
+    seats_available: SEED_SEATS,
+    start_date: '',
+    end_date: '',
     description_bn: planDescriptions[p.slug]?.bn.trim() || '',
     description_en: planDescriptions[p.slug]?.en.trim() || '',
   }));

@@ -16,6 +16,7 @@ module.exports = (collections) => {
   router.post('/auth/signup', signupLimit, ctrl.signup);
   router.post('/auth/login', loginLimit, ctrl.login);
   router.get('/auth/me', verifyToken, ctrl.me);
+  router.post('/auth/logout-all', verifyToken, ctrl.logoutAll);
 
   return router;
 };
