@@ -4,7 +4,6 @@ const { pickPresent, insertResponse, updateById, deleteById, assertUnreferenced 
 const { parseJsonField } = require('../utils/json');
 const { httpError } = require('../utils/http');
 const { DISTRICT_SLUG } = require('../utils/authValidation');
-const { sanitizeRichText } = require('../utils/sanitizeHtml');
 
 // Slugs end up in URLs and in users' visitedDistricts (which the profile API
 // validates with the same pattern), so anything else would break check-ins.
@@ -15,26 +14,6 @@ const districtSlug = (val) => {
     throw httpError(400, 'Slug must be 1-60 characters: lowercase letters, digits and hyphens only');
   }
   return slug;
-};
-
-const ATTRACTION_TYPES = ['nature', 'historical', 'religious', 'cultural', 'food', 'market'];
-const MAX_ATTRACTIONS = 30;
-
-// Attractions arrive as a JSON array of { name, type, desc, details }.
-// `desc` is the one-line summary on the card; `details` is the optional
-// rich-text write-up (sanitised like blog content). Unnamed rows are dropped.
-const buildAttractions = (val) => {
-  const list = parseJsonField(val, []);
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((a) => a && typeof a === 'object' && String(a.name || '').trim())
-    .slice(0, MAX_ATTRACTIONS)
-    .map((a) => ({
-      name: String(a.name).trim().slice(0, 120),
-      type: ATTRACTION_TYPES.includes(a.type) ? a.type : 'nature',
-      desc: String(a.desc || '').trim().slice(0, 300),
-      details: sanitizeRichText(typeof a.details === 'string' ? a.details : ''),
-    }));
 };
 
 const buildDistrictData = (body) => ({
@@ -51,12 +30,11 @@ const buildDistrictData = (body) => ({
   lat: Number(body.lat) || 0,
   lng: Number(body.lng) || 0,
   status: body.status || 'skeleton',
-  attractions: buildAttractions(body.attractions),
   food: parseJsonField(body.food, []),
   transport: body.transport || '',
 });
 
-// Counts of records that point at a district, by id (hotels, agents,
+// Counts of records that point at a district, by id (attractions, hotels, agents,
 // checkpoints, transports, guides), by slug (frames, blog posts) or by English
 // name (travel plans' `districts`, partners' `district`, which the admin panel
 // fills with name_en).
@@ -69,6 +47,7 @@ const countDistrictReferences = async (district, c) => {
   const count = (collection, filter) => (filter ? collection.countDocuments(filter) : 0);
 
   const counts = await Promise.all([
+    count(c.AttractionCollection, { district_id: idRef }),
     count(c.HotelCollection, { district_id: idRef }),
     count(c.DistrictAgentCollection, { district_id: idRef }),
     count(c.CheckpointCollection, { district_id: idRef }),
@@ -80,7 +59,7 @@ const countDistrictReferences = async (district, c) => {
     count(c.PartnerCollection, names.length ? { district: { $in: names } } : null),
   ]);
   const labels = [
-    ['hotel', 'hotels'], ['district agent', 'district agents'], ['checkpoint', 'checkpoints'],
+    ['attraction', 'attractions'], ['hotel', 'hotels'], ['district agent', 'district agents'], ['checkpoint', 'checkpoints'],
     ['transport', 'transports'], ['guide', 'guides'], ['frame', 'frames'],
     ['blog post', 'blog posts'], ['travel plan', 'travel plans'], ['partner', 'partners'],
   ];

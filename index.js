@@ -37,6 +37,7 @@ const checkpointRoutes = require('./src/routes/checkpointRoutes');
 const richTextRoutes = require('./src/routes/richTextRoutes');
 const bookingRoutes = require('./src/routes/bookingRoutes');
 const paymentMethodRoutes = require('./src/routes/paymentMethodRoutes');
+const attractionRoutes = require('./src/routes/attractionRoutes');
 const { createHoldHelpers } = require('./src/controllers/bookingController');
 const { initAuth } = require('./src/middleware/auth');
 
@@ -101,6 +102,7 @@ async function run() {
     app.use('/api', richTextRoutes());
     app.use('/api', bookingRoutes(collections));
     app.use('/api', paymentMethodRoutes(collections));
+    app.use('/api', attractionRoutes(collections));
 
     // Release seats held by unpaid bookings whose hold has expired. createBooking
     // also sweeps its own plan, so this only keeps seat counts fresh in between.

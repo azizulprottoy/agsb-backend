@@ -15,7 +15,9 @@
     "seed:districts": "node src/scripts/seedDistricts.js",
     "seed:districts:stage": "node -r dotenv/config src/scripts/seedDistricts.js dotenv_config_path=.env.stage",
     "images:districts": "node src/scripts/fetchDistrictImages.js",
-    "images:districts:stage": "node -r dotenv/config src/scripts/fetchDistrictImages.js dotenv_config_path=.env.stage"
+    "images:districts:stage": "node -r dotenv/config src/scripts/fetchDistrictImages.js dotenv_config_path=.env.stage",
+    "migrate:attractions": "node src/scripts/migrateAttractions.js",
+    "migrate:attractions:stage": "node -r dotenv/config src/scripts/migrateAttractions.js dotenv_config_path=.env.stage"
   },
   "author": "",
   "license": "ISC",

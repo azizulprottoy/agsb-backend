@@ -2,6 +2,7 @@ require('dotenv').config();
 const { connectDB, client } = require('../config/db');
 const planDescriptions = require('./data/planDescriptions');
 const districts = require('./data/districts');
+const { docsFromEmbedded } = require('../utils/attractions');
 
 const divisions = [
   { name_bn: "ঢাকা", name_en: "Dhaka", slug: "dhaka", color: "#4CAF50", districtCount: 13 },
@@ -62,7 +63,7 @@ const assertSafeToRun = () => {
     process.exit(1);
   }
   if (!process.argv.includes('--force')) {
-    console.error(`This deletes all divisions, districts, blog posts, travel plans, partners and membership plans in database "${process.env.MONGO_DB_NAME || '(default)'}".`);
+    console.error(`This deletes all divisions, districts, attractions, blog posts, travel plans, partners and membership plans in database "${process.env.MONGO_DB_NAME || '(default)'}".`);
     console.error('Re-run with --force to continue:  npm run seed:content -- --force');
     process.exit(1);
   }
@@ -77,11 +78,13 @@ async function seed() {
     TravelPlanCollection,
     PartnerCollection,
     MembershipPlanCollection,
+    AttractionCollection,
   } = await connectDB();
 
   await Promise.all([
     DivisionCollection.deleteMany({}),
     DistrictCollection.deleteMany({}),
+    AttractionCollection.deleteMany({}),
     BlogCollection.deleteMany({}),
     TravelPlanCollection.deleteMany({}),
     PartnerCollection.deleteMany({}),
@@ -92,11 +95,15 @@ async function seed() {
   const slugToDivisionId = {};
   divisions.forEach((d, i) => { slugToDivisionId[d.slug] = divisionResult.insertedIds[i]; });
 
-  const districtDocs = districts.map(({ divisionSlug, ...d }) => ({
+  const districtDocs = districts.map(({ divisionSlug, attractions, ...d }) => ({
     ...d,
     division_id: slugToDivisionId[divisionSlug],
   }));
   const districtResult = await DistrictCollection.insertMany(districtDocs);
+  // Attractions live in their own collection, linked by district_id.
+  const taken = new Set();
+  const attractionDocs = districts.flatMap((d, i) => docsFromEmbedded({ ...d, _id: districtResult.insertedIds[i] }, taken));
+  if (attractionDocs.length) await AttractionCollection.insertMany(attractionDocs);
 
   const blogDocs = blogPosts.map((b) => ({ ...b, content: b.excerpt }));
   const blogResult = await BlogCollection.insertMany(blogDocs);

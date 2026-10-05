@@ -63,6 +63,7 @@ module.exports = {
   // ones and keeps premium originals private (see utils/frameFiles.js).
   uploadFrame: uploaderFor(path.join(rootDir, 'private-uploads', 'frames')),
   uploadHotel: fixedUploader('hotels'),
+  uploadAttraction: fixedUploader('attractions'),
   uploadTransport: fixedUploader('transports'),
   uploadGuide: fixedUploader('guides'),
   uploadDistrictAgent: fixedUploader('districtagents'),

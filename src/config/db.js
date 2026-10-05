@@ -19,6 +19,8 @@ const INDEXES = [
   ['admins', { email: 1 }, { unique: true, collation: EMAIL_COLLATION, name: 'email_unique_ci' }],
   ['divisions', { slug: 1 }, { unique: true, name: 'slug_unique' }],
   ['districts', { slug: 1 }, { unique: true, name: 'slug_unique' }],
+  ['attractions', { slug: 1 }, { unique: true, name: 'slug_unique' }],
+  ['attractions', { district_id: 1, order: 1 }, { name: 'district_id_order' }],
   ['travelplans', { slug: 1 }, { unique: true, name: 'slug_unique' }],
   ['blogposts', { slug: 1 }, { unique: true, name: 'slug_unique' }],
   ['bookings', { referenceCode: 1 }, { unique: true, name: 'referenceCode_unique' }],
@@ -70,6 +72,7 @@ async function connectDB() {
     GuideCollection:         db.collection('guides'),
     DistrictAgentCollection: db.collection('districtagents'),
     CheckpointCollection:    db.collection('checkpoints'),
+    AttractionCollection:    db.collection('attractions'),
     BookingCollection:       db.collection('bookings'),
     PaymentMethodCollection: db.collection('paymentmethods'),
   };

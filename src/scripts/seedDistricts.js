@@ -1,12 +1,14 @@
 // Adds every district from data/districts.js that the database doesn't have
 // yet (matched by slug). Existing districts are never changed, so edits made
-// in the admin panel are kept. Safe to re-run.
+// in the admin panel are kept. Each added district's attractions (listed in
+// the data file) go into the attractions collection. Safe to re-run.
 //   npm run seed:districts            (database from .env)
 //   npm run seed:districts:stage      (database from .env.stage)
 //   ... -- --dry-run                  list what would be added, write nothing
 require('dotenv').config();
 const { connectDB, client } = require('../config/db');
 const districts = require('./data/districts');
+const { docsFromEmbedded } = require('../utils/attractions');
 
 // Division slugs used in the data -> slugs a database may store them under.
 const DIVISION_ALIASES = {
@@ -16,7 +18,7 @@ const DIVISION_ALIASES = {
 
 async function run() {
   const dryRun = process.argv.includes('--dry-run');
-  const { DivisionCollection, DistrictCollection } = await connectDB();
+  const { DivisionCollection, DistrictCollection, AttractionCollection } = await connectDB();
 
   const divisions = await DivisionCollection.find({}, { projection: { slug: 1 } }).toArray();
   const divisionId = (slug) => {
@@ -47,8 +49,12 @@ async function run() {
   } else if (dryRun) {
     console.log(`Would add ${docs.length}: ${docs.map((d) => d.slug).join(', ')}`);
   } else {
-    const result = await DistrictCollection.insertMany(docs, { ordered: false });
-    console.log(`Added ${result.insertedCount}: ${docs.map((d) => d.slug).join(', ')}`);
+    // Attractions live in their own collection, not inside the district.
+    const result = await DistrictCollection.insertMany(docs.map(({ attractions, ...d }) => d), { ordered: false });
+    const taken = new Set((await AttractionCollection.find({}, { projection: { slug: 1 } }).toArray()).map((a) => a.slug));
+    const attractionDocs = docs.flatMap((d, i) => docsFromEmbedded({ ...d, _id: result.insertedIds[i] }, taken));
+    if (attractionDocs.length) await AttractionCollection.insertMany(attractionDocs);
+    console.log(`Added ${result.insertedCount} districts and ${attractionDocs.length} attractions: ${docs.map((d) => d.slug).join(', ')}`);
   }
   await client.close();
 }

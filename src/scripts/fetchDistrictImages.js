@@ -118,11 +118,11 @@ const commonsInfo = async (fileNames) => {
 
 // slug -> photo for every district, trying the district article first and
 // then each attraction's article, one batched round per candidate position.
-const findPhotos = async (districts) => {
+const findPhotos = async (districts, attractionNames) => {
   const candidates = new Map(districts.map((d) => [d.slug, [
     ...(PREFERRED_TITLES[d.slug] ? [PREFERRED_TITLES[d.slug]] : []),
     WIKI_TITLES[d.slug] || `${d.name_en} District`,
-    ...(d.attractions || []).map((a) => String(a.name || '').split(',')[0].trim()).filter(Boolean),
+    ...(attractionNames.get(String(d._id)) || []).map((name) => String(name).split(',')[0].trim()).filter(Boolean),
   ]]));
   const photos = new Map();
   for (let round = 0; round < 5; round++) {
@@ -143,13 +143,18 @@ const needsImage = (image) => !image || /^https?:\/\//i.test(image);
 async function run() {
   const dryRun = process.argv.includes('--dry-run');
   const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',');
-  const { DistrictCollection } = await connectDB();
+  const { DistrictCollection, AttractionCollection } = await connectDB();
   const districts = await DistrictCollection.find(only ? { slug: { $in: only } } : {}).sort({ slug: 1 }).toArray();
   const todo = districts.filter((d) => needsImage(d.image));
   console.log(`${todo.length} of ${districts.length} districts need a photo${dryRun ? ' (dry run)' : ''}.`);
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  const photos = await findPhotos(todo);
+  const attractionNames = new Map();
+  for (const a of await AttractionCollection.find({}, { projection: { district_id: 1, name: 1 } }).sort({ order: 1 }).toArray()) {
+    const key = String(a.district_id);
+    attractionNames.set(key, [...(attractionNames.get(key) || []), a.name]);
+  }
+  const photos = await findPhotos(todo, attractionNames);
   const missed = [];
   for (const district of todo) {
     const photo = photos.get(district.slug);
