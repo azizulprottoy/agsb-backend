@@ -4,6 +4,7 @@ const { pickPresent, insertResponse, updateById, deleteById, assertUnreferenced 
 const { parseJsonField } = require('../utils/json');
 const { httpError } = require('../utils/http');
 const { DISTRICT_SLUG } = require('../utils/authValidation');
+const { sanitizeRichText } = require('../utils/sanitizeHtml');
 
 // Slugs end up in URLs and in users' visitedDistricts (which the profile API
 // validates with the same pattern), so anything else would break check-ins.
@@ -14,6 +15,26 @@ const districtSlug = (val) => {
     throw httpError(400, 'Slug must be 1-60 characters: lowercase letters, digits and hyphens only');
   }
   return slug;
+};
+
+const ATTRACTION_TYPES = ['nature', 'historical', 'religious', 'cultural', 'food', 'market'];
+const MAX_ATTRACTIONS = 30;
+
+// Attractions arrive as a JSON array of { name, type, desc, details }.
+// `desc` is the one-line summary on the card; `details` is the optional
+// rich-text write-up (sanitised like blog content). Unnamed rows are dropped.
+const buildAttractions = (val) => {
+  const list = parseJsonField(val, []);
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((a) => a && typeof a === 'object' && String(a.name || '').trim())
+    .slice(0, MAX_ATTRACTIONS)
+    .map((a) => ({
+      name: String(a.name).trim().slice(0, 120),
+      type: ATTRACTION_TYPES.includes(a.type) ? a.type : 'nature',
+      desc: String(a.desc || '').trim().slice(0, 300),
+      details: sanitizeRichText(typeof a.details === 'string' ? a.details : ''),
+    }));
 };
 
 const buildDistrictData = (body) => ({
@@ -30,7 +51,7 @@ const buildDistrictData = (body) => ({
   lat: Number(body.lat) || 0,
   lng: Number(body.lng) || 0,
   status: body.status || 'skeleton',
-  attractions: parseJsonField(body.attractions, []),
+  attractions: buildAttractions(body.attractions),
   food: parseJsonField(body.food, []),
   transport: body.transport || '',
 });
@@ -96,6 +117,8 @@ module.exports = (collections) => {
       const updatedData = pickPresent(buildDistrictData(req.body), req.body);
       if (req.file) {
         updatedData.image = `/uploads/districts/${req.file.filename}`;
+        // The credit belonged to the imported Commons photo being replaced.
+        updatedData.image_credit = null;
       }
 
       const updatedDistrict = await updateById(DistrictCollection, req.params.id, updatedData, 'District');

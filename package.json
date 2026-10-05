@@ -11,7 +11,11 @@
     "seed:admin": "node src/scripts/seedAdmin.js",
     "seed:content": "node src/scripts/seedContent.js",
     "migrate:premium-frames": "node src/scripts/protectPremiumFrames.js",
-    "migrate:premium-frames:stage": "node -r dotenv/config src/scripts/protectPremiumFrames.js dotenv_config_path=.env.stage"
+    "migrate:premium-frames:stage": "node -r dotenv/config src/scripts/protectPremiumFrames.js dotenv_config_path=.env.stage",
+    "seed:districts": "node src/scripts/seedDistricts.js",
+    "seed:districts:stage": "node -r dotenv/config src/scripts/seedDistricts.js dotenv_config_path=.env.stage",
+    "images:districts": "node src/scripts/fetchDistrictImages.js",
+    "images:districts:stage": "node -r dotenv/config src/scripts/fetchDistrictImages.js dotenv_config_path=.env.stage"
   },
   "author": "",
   "license": "ISC",

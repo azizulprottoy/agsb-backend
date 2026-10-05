@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { connectDB, client } = require('../config/db');
 const planDescriptions = require('./data/planDescriptions');
+const districts = require('./data/districts');
 
 const divisions = [
   { name_bn: "ঢাকা", name_en: "Dhaka", slug: "dhaka", color: "#4CAF50", districtCount: 13 },
@@ -13,101 +14,6 @@ const divisions = [
   { name_bn: "ময়মনসিংহ", name_en: "Mymensingh", slug: "mymensingh", color: "#E91E63", districtCount: 4 },
 ];
 
-const districts = [
-  { divisionSlug: "chittagong", name_bn: "কক্সবাজার", name_en: "Cox's Bazar", slug: "coxs-bazar", tagline: "বিশ্বের দীর্ঘতম সমুদ্র সৈকত", best_time: "Nov–Mar", trip_type: "Beach", budget: "৳3,000–৳8,000", difficulty: 2, family: true, lat: 21.4272, lng: 92.0058, status: "complete", image: "https://images.unsplash.com/photo-1596895111956-bf1cf0599ce5?w=600", attractions: [
-    { name: "Inani Beach", type: "nature", desc: "Crystal clear water and coral stones" },
-    { name: "Himchari National Park", type: "nature", desc: "Waterfalls and tropical forest trails" },
-    { name: "Teknaf", type: "nature", desc: "Southernmost tip of mainland Bangladesh" },
-    { name: "Laboni Beach", type: "nature", desc: "Main beach with sunset views and activities" },
-    { name: "Burmese Market", type: "market", desc: "Handicrafts, dry fish, and local goods" },
-  ], food: ["Shutki (dry fish)", "Mezban beef", "Seafood platter", "Fresh coconut"], transport: "Bus from Dhaka (10-12h) or flight (1h)" },
-
-  { divisionSlug: "sylhet", name_bn: "সিলেট", name_en: "Sylhet", slug: "sylhet", tagline: "চায়ের দেশ, সবুজের রাজ্য", best_time: "Oct–Mar", trip_type: "Nature", budget: "৳2,500–৳6,000", difficulty: 2, family: true, lat: 24.8949, lng: 91.8687, status: "complete", image: "https://images.unsplash.com/photo-1609946860441-a51ffcf22208?w=600", attractions: [
-    { name: "Ratargul Swamp Forest", type: "nature", desc: "Only freshwater swamp forest in Bangladesh" },
-    { name: "Jaflong", type: "nature", desc: "Stone collection point with mountain backdrop" },
-    { name: "Lalakhal", type: "nature", desc: "Emerald green river surrounded by tea gardens" },
-    { name: "Hazrat Shah Jalal Shrine", type: "religious", desc: "Historic Sufi shrine in the city center" },
-  ], food: ["Sylheti 7-curry", "Shatkora beef", "Pitha", "Tea garden fresh tea"], transport: "Bus from Dhaka (5-6h) or flight (45min)" },
-
-  { divisionSlug: "chittagong", name_bn: "বান্দরবান", name_en: "Bandarban", slug: "bandarban", tagline: "মেঘের রাজ্য, পাহাড়ের স্বর্গ", best_time: "Nov–Mar", trip_type: "Adventure", budget: "৳4,000–৳10,000", difficulty: 4, family: false, lat: 22.1953, lng: 92.2184, status: "complete", image: "https://images.unsplash.com/photo-1582979512210-99b6a53386f9?w=600", attractions: [
-    { name: "Nilgiri", type: "nature", desc: "Highest accessible hilltop resort at 2,200ft" },
-    { name: "Boga Lake", type: "nature", desc: "Sacred crater lake at the mountain peak" },
-    { name: "Nafakhum Waterfall", type: "nature", desc: "Largest waterfall by volume in Bangladesh" },
-    { name: "Golden Temple", type: "religious", desc: "Largest Theravada Buddhist monastery" },
-  ], food: ["Bamboo chicken", "Tribal jhuri", "Hill rice", "Bamboo shoot curry"], transport: "Bus from Chittagong (3h), then local jeep" },
-
-  { divisionSlug: "chittagong", name_bn: "রাঙামাটি", name_en: "Rangamati", slug: "rangamati", tagline: "হ্রদের শহর, শান্তির নীলিমা", best_time: "Oct–Mar", trip_type: "Lake", budget: "৳3,000–৳7,000", difficulty: 3, family: true, lat: 22.6324, lng: 92.1036, status: "good", image: "https://images.unsplash.com/photo-1590579491624-f98f36d4c763?w=600", attractions: [
-    { name: "Kaptai Lake", type: "nature", desc: "Largest artificial lake in Bangladesh" },
-    { name: "Hanging Bridge", type: "cultural", desc: "Iconic suspension bridge over the lake" },
-    { name: "Shuvolong Waterfall", type: "nature", desc: "Seasonal waterfall reachable by boat" },
-  ], food: ["Tribal bamboo fish", "Kaptai fish curry", "Hill fruit"], transport: "Bus from Chittagong (3.5h)" },
-
-  { divisionSlug: "khulna", name_bn: "বাগেরহাট", name_en: "Bagerhat", slug: "bagerhat", tagline: "মসজিদের শহর, সুন্দরবনের দুয়ার", best_time: "Nov–Feb", trip_type: "Heritage", budget: "৳2,000–৳5,000", difficulty: 2, family: true, lat: 22.6512, lng: 89.7851, status: "complete", image: "https://images.unsplash.com/photo-1605540436563-5bca919ae766?w=600", attractions: [
-    { name: "Sixty Dome Mosque", type: "historical", desc: "UNESCO World Heritage Site from 15th century" },
-    { name: "Sundarbans Entry Point", type: "nature", desc: "Gateway to the world's largest mangrove" },
-    { name: "Khan Jahan Ali Tomb", type: "historical", desc: "Mausoleum of the city's founder saint" },
-  ], food: ["Sundarban honey", "Golda chingri", "Bagda prawn"], transport: "Bus from Dhaka (7h) or Khulna (2h)" },
-
-  { divisionSlug: "sylhet", name_bn: "মৌলভীবাজার", name_en: "Moulvibazar", slug: "moulvibazar", tagline: "চা বাগান আর হাওরের মিলনভূমি", best_time: "Oct–Mar", trip_type: "Nature", budget: "৳2,000–৳5,000", difficulty: 2, family: true, lat: 24.4829, lng: 91.7774, status: "good", image: "https://images.unsplash.com/photo-1566296524505-3d731d642fbe?w=600", attractions: [
-    { name: "Lawachara National Park", type: "nature", desc: "Rainforest with hoolock gibbons" },
-    { name: "Madhabpur Lake", type: "nature", desc: "Scenic lake amid tea gardens" },
-    { name: "Srimangal Tea Gardens", type: "nature", desc: "Tea capital of Bangladesh" },
-  ], food: ["7-layer tea", "Lemon tea", "Manipuri cuisine", "Paan"], transport: "Train from Dhaka to Srimangal (5h)" },
-
-  { divisionSlug: "rajshahi", name_bn: "রাজশাহী", name_en: "Rajshahi", slug: "rajshahi", tagline: "রেশম ও আমের শহর", best_time: "Year-round", trip_type: "Heritage", budget: "৳1,500–৳4,000", difficulty: 1, family: true, lat: 24.3745, lng: 88.6042, status: "good", image: "https://images.unsplash.com/photo-1590077428593-a55bb07c4665?w=600", attractions: [
-    { name: "Varendra Research Museum", type: "historical", desc: "Oldest museum in Bangladesh" },
-    { name: "Puthia Temple Complex", type: "religious", desc: "Cluster of Hindu temples with terracotta art" },
-    { name: "Padma Riverfront", type: "nature", desc: "Beautiful sunset views over the Padma" },
-  ], food: ["Rajshahi mango", "Kalai roti", "Chapainawabganj mango"], transport: "Train from Dhaka (5-6h) or flight (45min)" },
-
-  { divisionSlug: "rangpur", name_bn: "দিনাজপুর", name_en: "Dinajpur", slug: "dinajpur", tagline: "লিচু আর প্রত্নতত্ত্বের শহর", best_time: "Oct–Mar", trip_type: "Heritage", budget: "৳1,500–৳3,500", difficulty: 1, family: true, lat: 25.6279, lng: 88.6332, status: "good", image: "https://images.unsplash.com/photo-1596402184320-417e7178b2cd?w=600", attractions: [
-    { name: "Kantajew Temple", type: "religious", desc: "18th-century terracotta Hindu temple" },
-    { name: "Ramsagar National Park", type: "nature", desc: "Largest man-made lake in Bangladesh" },
-    { name: "Nayabad Mosque", type: "historical", desc: "Beautiful Mughal-era mosque" },
-  ], food: ["Dinajpur litchi", "Chira & doi", "Pitha"], transport: "Train from Dhaka (8-10h)" },
-
-  { divisionSlug: "dhaka", name_bn: "টাঙ্গাইল", name_en: "Tangail", slug: "tangail", tagline: "তাঁত শিল্প আর ইতিহাসের জনপদ", best_time: "Year-round", trip_type: "Cultural", budget: "৳1,000–৳3,000", difficulty: 1, family: true, lat: 24.2513, lng: 89.9168, status: "skeleton", image: "https://images.unsplash.com/photo-1590077428593-a55bb07c4665?w=600", attractions: [
-    { name: "Atia Mosque", type: "historical", desc: "16th-century Mughal mosque" },
-    { name: "Madhupur Forest", type: "nature", desc: "Sal forest with Garo tribal villages" },
-  ], food: ["Tangail sari district food", "Cham cham sweets"], transport: "Bus from Dhaka (3h)" },
-
-  { divisionSlug: "barishal", name_bn: "পটুয়াখালী", name_en: "Patuakhali", slug: "patuakhali", tagline: "কুয়াকাটা — সাগরকন্যা", best_time: "Nov–Mar", trip_type: "Beach", budget: "৳2,000–৳5,000", difficulty: 2, family: true, lat: 22.3596, lng: 90.3295, status: "good", image: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600", attractions: [
-    { name: "Kuakata Beach", type: "nature", desc: "Only beach where you see both sunrise and sunset" },
-    { name: "Fatrar Char", type: "nature", desc: "Mangrove island with red crabs" },
-    { name: "Buddhist Temple", type: "religious", desc: "Rakhine community temple near the beach" },
-  ], food: ["Shutki bhorta", "Sea fish curry", "Coconut sweets"], transport: "Bus from Dhaka (8-10h) or Barishal launch (4h)" },
-
-  { divisionSlug: "chittagong", name_bn: "খাগড়াছড়ি", name_en: "Khagrachari", slug: "khagrachari", tagline: "পাহাড়ের কোলে আদিবাসী জনপদ", best_time: "Nov–Feb", trip_type: "Adventure", budget: "৳3,000–৳6,000", difficulty: 3, family: false, lat: 23.1193, lng: 91.9847, status: "skeleton", image: "https://images.unsplash.com/photo-1582979512210-99b6a53386f9?w=600", attractions: [
-    { name: "Alutila Cave", type: "nature", desc: "Mysterious dark cave with underground stream" },
-    { name: "Richhang Waterfall", type: "nature", desc: "Multi-step waterfall in the hills" },
-  ], food: ["Tribal bamboo chicken", "Hill vegetables"], transport: "Bus from Chittagong (4h)" },
-
-  { divisionSlug: "dhaka", name_bn: "মুন্সীগঞ্জ", name_en: "Munshiganj", slug: "munshiganj", tagline: "বিক্রমপুরের ঐতিহ্য", best_time: "Year-round", trip_type: "Heritage", budget: "৳800–৳2,000", difficulty: 1, family: true, lat: 23.4981, lng: 90.4127, status: "skeleton", image: "https://images.unsplash.com/photo-1590077428593-a55bb07c4665?w=600", attractions: [
-    { name: "Sonargaon", type: "historical", desc: "Ancient capital with Panam City ruins" },
-    { name: "Idrakpur Fort", type: "historical", desc: "Mughal-era river fort" },
-  ], food: ["Hilsa fish", "Munshiganj jackfruit"], transport: "Bus from Dhaka (1.5h)" },
-
-  { divisionSlug: "khulna", name_bn: "সাতক্ষীরা", name_en: "Satkhira", slug: "satkhira", tagline: "সুন্দরবনের পশ্চিম দুয়ার", best_time: "Nov–Feb", trip_type: "Nature", budget: "৳2,000–৳4,000", difficulty: 2, family: true, lat: 22.7186, lng: 89.0699, status: "skeleton", image: "https://images.unsplash.com/photo-1605540436563-5bca919ae766?w=600", attractions: [
-    { name: "Sundarbans West", type: "nature", desc: "Western route to the mangrove forest" },
-    { name: "Shyamnagar", type: "nature", desc: "Entry point for Sundarbans tours" },
-  ], food: ["Bagda prawn", "Sundarbans honey", "Mola fish"], transport: "Bus from Khulna (3h)" },
-
-  { divisionSlug: "sylhet", name_bn: "সুনামগঞ্জ", name_en: "Sunamganj", slug: "sunamganj", tagline: "হাওর আর বাউলের দেশ", best_time: "Jun–Sep (monsoon)", trip_type: "Haor", budget: "৳2,000–৳5,000", difficulty: 3, family: true, lat: 25.0715, lng: 91.3953, status: "good", image: "https://images.unsplash.com/photo-1609946860441-a51ffcf22208?w=600", attractions: [
-    { name: "Tanguar Haor", type: "nature", desc: "Ramsar wetland with migratory birds" },
-    { name: "Shimul Bagan", type: "nature", desc: "Red silk cotton tree garden" },
-    { name: "Hasong Raja Museum", type: "cultural", desc: "Museum of the legendary folk poet" },
-  ], food: ["Haor fish varieties", "Shunamgonj sweets"], transport: "Bus from Sylhet (2.5h)" },
-
-  { divisionSlug: "rajshahi", name_bn: "চাঁপাইনবাবগঞ্জ", name_en: "Chapainawabganj", slug: "chapainawabganj", tagline: "আমের রাজধানী", best_time: "May–Jul (mango), Oct–Feb", trip_type: "Cultural", budget: "৳1,500–৳3,500", difficulty: 1, family: true, lat: 24.5965, lng: 88.2775, status: "skeleton", image: "https://images.unsplash.com/photo-1590077428593-a55bb07c4665?w=600", attractions: [
-    { name: "Sona Mosque", type: "historical", desc: "Golden mosque from the sultanate era" },
-    { name: "Mango Orchards", type: "nature", desc: "Vast mango gardens in summer" },
-  ], food: ["Chapai mango (Himsagar, Langra, Fazli)", "Kalai roti"], transport: "Train from Rajshahi (2h)" },
-
-  { divisionSlug: "mymensingh", name_bn: "নেত্রকোনা", name_en: "Netrokona", slug: "netrokona", tagline: "মেঘালয়ের পাদদেশে", best_time: "Oct–Mar", trip_type: "Nature", budget: "৳1,500–৳3,500", difficulty: 2, family: true, lat: 24.8703, lng: 90.7286, status: "skeleton", image: "https://images.unsplash.com/photo-1590579491624-f98f36d4c763?w=600", attractions: [
-    { name: "Birishiri", type: "nature", desc: "White clay hills at the India border" },
-    { name: "Durgapur", type: "cultural", desc: "Garo and Hajong tribal villages" },
-  ], food: ["Hill fruits", "Local rice varieties"], transport: "Bus from Mymensingh (2.5h)" },
-];
 
 const blogPosts = [
   { title_bn: "কক্সবাজার ভ্রমণ গাইড ২০২৬", title_en: "Cox's Bazar Travel Guide 2026", slug: "coxs-bazar-travel-guide-2026", category: "Guide", image: "https://images.unsplash.com/photo-1596895111956-bf1cf0599ce5?w=600", excerpt: "Complete budget breakdown, best hotels, food spots, and a 3-day itinerary for Cox's Bazar.", date: "2026-08-05", readTime: "8 min", districtSlug: "coxs-bazar" },
