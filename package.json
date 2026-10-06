@@ -17,7 +17,13 @@
     "images:districts": "node src/scripts/fetchDistrictImages.js",
     "images:districts:stage": "node -r dotenv/config src/scripts/fetchDistrictImages.js dotenv_config_path=.env.stage",
     "migrate:attractions": "node src/scripts/migrateAttractions.js",
-    "migrate:attractions:stage": "node -r dotenv/config src/scripts/migrateAttractions.js dotenv_config_path=.env.stage"
+    "migrate:attractions:stage": "node -r dotenv/config src/scripts/migrateAttractions.js dotenv_config_path=.env.stage",
+    "fill:attractions": "node src/scripts/fillAttractionDetails.js",
+    "fill:attractions:stage": "node -r dotenv/config src/scripts/fillAttractionDetails.js dotenv_config_path=.env.stage",
+    "seed:products": "node src/scripts/seedProducts.js",
+    "seed:products:stage": "node -r dotenv/config src/scripts/seedProducts.js dotenv_config_path=.env.stage",
+    "seed:payment-methods": "node src/scripts/seedPaymentMethods.js",
+    "seed:payment-methods:stage": "node -r dotenv/config src/scripts/seedPaymentMethods.js dotenv_config_path=.env.stage"
   },
   "author": "",
   "license": "ISC",

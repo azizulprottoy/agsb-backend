@@ -5,14 +5,14 @@ const districts = require('./data/districts');
 const { docsFromEmbedded } = require('../utils/attractions');
 
 const divisions = [
-  { name_bn: "ঢাকা", name_en: "Dhaka", slug: "dhaka", color: "#4CAF50", districtCount: 13 },
-  { name_bn: "চট্টগ্রাম", name_en: "Chittagong", slug: "chittagong", color: "#2196F3", districtCount: 11 },
-  { name_bn: "খুলনা", name_en: "Khulna", slug: "khulna", color: "#FF9800", districtCount: 10 },
-  { name_bn: "রাজশাহী", name_en: "Rajshahi", slug: "rajshahi", color: "#9C27B0", districtCount: 8 },
-  { name_bn: "রংপুর", name_en: "Rangpur", slug: "rangpur", color: "#F44336", districtCount: 8 },
-  { name_bn: "বরিশাল", name_en: "Barishal", slug: "barishal", color: "#00BCD4", districtCount: 6 },
-  { name_bn: "সিলেট", name_en: "Sylhet", slug: "sylhet", color: "#8BC34A", districtCount: 4 },
-  { name_bn: "ময়মনসিংহ", name_en: "Mymensingh", slug: "mymensingh", color: "#E91E63", districtCount: 4 },
+  { name_bn: "ঢাকা", name_en: "Dhaka", slug: "dhaka", districtCount: 13 },
+  { name_bn: "চট্টগ্রাম", name_en: "Chittagong", slug: "chittagong", districtCount: 11 },
+  { name_bn: "খুলনা", name_en: "Khulna", slug: "khulna", districtCount: 10 },
+  { name_bn: "রাজশাহী", name_en: "Rajshahi", slug: "rajshahi", districtCount: 8 },
+  { name_bn: "রংপুর", name_en: "Rangpur", slug: "rangpur", districtCount: 8 },
+  { name_bn: "বরিশাল", name_en: "Barishal", slug: "barishal", districtCount: 6 },
+  { name_bn: "সিলেট", name_en: "Sylhet", slug: "sylhet", districtCount: 4 },
+  { name_bn: "ময়মনসিংহ", name_en: "Mymensingh", slug: "mymensingh", districtCount: 4 },
 ];
 
 

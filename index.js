@@ -37,8 +37,14 @@ const checkpointRoutes = require('./src/routes/checkpointRoutes');
 const richTextRoutes = require('./src/routes/richTextRoutes');
 const bookingRoutes = require('./src/routes/bookingRoutes');
 const paymentMethodRoutes = require('./src/routes/paymentMethodRoutes');
+const reviewRoutes = require('./src/routes/reviewRoutes');
 const attractionRoutes = require('./src/routes/attractionRoutes');
+const socialRoutes = require('./src/routes/socialRoutes');
+const couponRoutes = require('./src/routes/couponRoutes');
+const productRoutes = require('./src/routes/productRoutes');
+const orderRoutes = require('./src/routes/orderRoutes');
 const { createHoldHelpers } = require('./src/controllers/bookingController');
+const { createOrderHoldHelpers } = require('./src/controllers/orderController');
 const { initAuth } = require('./src/middleware/auth');
 
 // How often unpaid bookings with an expired seat hold are cancelled.
@@ -58,7 +64,9 @@ app.use(express.json());
 // file multer stored for it behind in uploads/.
 app.use((req, res, next) => {
   res.on('finish', () => {
-    if (res.statusCode >= 400 && req.file?.path) fs.unlink(req.file.path, () => {});
+    if (res.statusCode < 400) return;
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    for (const file of Array.isArray(req.files) ? req.files : []) fs.unlink(file.path, () => {});
   });
   next();
 });
@@ -103,13 +111,25 @@ async function run() {
     app.use('/api', bookingRoutes(collections));
     app.use('/api', paymentMethodRoutes(collections));
     app.use('/api', attractionRoutes(collections));
+    app.use('/api', socialRoutes(collections));
+    app.use('/api', couponRoutes(collections));
+    app.use('/api', productRoutes(collections));
+    app.use('/api', orderRoutes(collections));
+    app.use('/api', reviewRoutes(collections));
 
     // Release seats held by unpaid bookings whose hold has expired. createBooking
     // also sweeps its own plan, so this only keeps seat counts fresh in between.
+    // Shop orders hold stock the same way.
     const { sweepExpiredHolds } = createHoldHelpers(collections);
-    const sweep = () => sweepExpiredHolds()
-      .then((n) => { if (n) console.log(`Expired ${n} unpaid booking hold(s)`); })
-      .catch((err) => console.error('Booking hold sweep error:', err));
+    const { sweepExpiredOrderHolds } = createOrderHoldHelpers(collections);
+    const sweep = () => Promise.all([
+      sweepExpiredHolds()
+        .then((n) => { if (n) console.log(`Expired ${n} unpaid booking hold(s)`); })
+        .catch((err) => console.error('Booking hold sweep error:', err)),
+      sweepExpiredOrderHolds()
+        .then((n) => { if (n) console.log(`Expired ${n} unpaid order hold(s)`); })
+        .catch((err) => console.error('Order hold sweep error:', err)),
+    ]);
     sweep();
     const sweepTimer = setInterval(sweep, HOLD_SWEEP_INTERVAL_MS);
     sweepTimer.unref();
@@ -129,7 +149,7 @@ async function run() {
       if (err.name === 'MulterError') {
         status = 400;
         if (err.code === 'LIMIT_FILE_SIZE') message = `File too large (max ${MAX_FILE_SIZE / (1024 * 1024)} MB)`;
-        else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Only one image file is allowed';
+        else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') message = 'Too many image files';
       } else if (isDuplicateKeyError(err)) {
         status = 409;
         message = duplicateKeyMessage(err);

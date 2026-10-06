@@ -170,6 +170,38 @@ module.exports = ({ AdminCollection, UserCollection }) => ({
     res.json({ success: true, user });
   },
 
+  // Signed-in user changes their password. Every other session is signed out
+  // (tokenVersion moves on) and this one gets a fresh token.
+  // Body: { currentPassword, newPassword } -> { success, token }
+  changePassword: async (req, res) => {
+    if (req.user.role === 'admin') {
+      return res.status(403).json({ success: false, message: 'Admin passwords are changed by the seed script' });
+    }
+    const body = req.body || {};
+    const current = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+    const next = validateNewPassword(body.newPassword);
+    if (next.error) return res.status(400).json({ success: false, message: next.error });
+
+    const _id = toObjectId(req.user.userId);
+    const user = _id && await UserCollection.findOne({ _id });
+    if (!user) return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    if (!current || !(await bcrypt.compare(current, user.passwordHash || DUMMY_HASH))) {
+      return res.status(400).json({ success: false, message: 'Current password is incorrect' });
+    }
+    if (await bcrypt.compare(next.value, user.passwordHash)) {
+      return res.status(400).json({ success: false, message: 'New password must be different from the current one' });
+    }
+
+    const passwordHash = await bcrypt.hash(next.value, 10);
+    const updated = await UserCollection.findOneAndUpdate(
+      { _id, passwordHash: user.passwordHash },
+      { $set: { passwordHash }, $inc: { tokenVersion: 1 } },
+      { returnDocument: 'after' }
+    );
+    if (!updated) return res.status(409).json({ success: false, message: 'Your password was changed elsewhere. Sign in again.' });
+    res.json({ success: true, message: 'Password changed', token: signToken(updated, 'user') });
+  },
+
   // Revoke every token issued to the caller (all devices). The caller's own
   // token stops working too; the client should discard it and log in again.
   logoutAll: async (req, res) => {

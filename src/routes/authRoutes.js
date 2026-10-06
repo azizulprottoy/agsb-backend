@@ -8,6 +8,7 @@ const { rateLimit } = require('../middleware/rateLimit');
 // carrier NAT) aren't locked out by each other's successful sign-ins.
 const adminLoginLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many login attempts. Please try again later.', skipSuccessful: true });
 const loginLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many login attempts. Please try again later.', skipSuccessful: true });
+const changePasswordLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please try again later.', skipSuccessful: true });
 const signupLimit = rateLimit({ max: 5, windowMs: 60 * 60 * 1000, message: 'Too many signup attempts. Please try again later.' });
 
 module.exports = (collections) => {
@@ -19,6 +20,7 @@ module.exports = (collections) => {
   router.post('/auth/login', loginLimit, ctrl.login);
   router.get('/auth/me', verifyToken, ctrl.me);
   router.post('/auth/logout-all', verifyToken, ctrl.logoutAll);
+  router.post('/auth/change-password', verifyToken, changePasswordLimit, ctrl.changePassword);
 
   return router;
 };

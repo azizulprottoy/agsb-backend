@@ -38,7 +38,7 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-const uploaderFor = (dirPath) => multer({
+const uploaderFor = (dirPath, maxFiles = 1) => multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       ensureDir(dirPath);
@@ -47,14 +47,18 @@ const uploaderFor = (dirPath) => multer({
     filename,
   }),
   fileFilter,
-  limits: { fileSize: MAX_FILE_SIZE, files: 1 },
+  limits: { fileSize: MAX_FILE_SIZE, files: maxFiles },
 });
 
 const fixedUploader = (...subdirs) => uploaderFor(path.join(rootDir, 'uploads', ...subdirs));
 
+// Products have a gallery: up to this many images per request.
+const MAX_PRODUCT_IMAGES = 6;
+
 module.exports = {
   ensureDir,
   MAX_FILE_SIZE,
+  MAX_PRODUCT_IMAGES,
   uploadDistrict: fixedUploader('districts'),
   uploadBlog: fixedUploader('blog'),
   uploadPlan: fixedUploader('plans'),
@@ -68,4 +72,6 @@ module.exports = {
   uploadGuide: fixedUploader('guides'),
   uploadDistrictAgent: fixedUploader('districtagents'),
   uploadRichText: fixedUploader('richtext'),
+  uploadProduct: uploaderFor(path.join(rootDir, 'uploads', 'products'), MAX_PRODUCT_IMAGES),
+  uploadProductCategory: fixedUploader('productcategories'),
 };

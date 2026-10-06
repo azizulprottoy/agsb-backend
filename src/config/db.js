@@ -32,6 +32,26 @@ const INDEXES = [
   ['bookings', { userId: 1 }, { name: 'userId' }],
   ['bookings', { planId: 1, paymentStatus: 1, bookingStatus: 1 }, { name: 'planId_paymentStatus_bookingStatus' }],
   ['bookings', { holdExpiresAt: 1 }, { name: 'holdExpiresAt' }],
+  ['coupons', { code: 1 }, { unique: true, name: 'code_unique' }],
+  ['productcategories', { slug: 1 }, { unique: true, name: 'slug_unique' }],
+  ['products', { slug: 1 }, { unique: true, name: 'slug_unique' }],
+  ['products', { category_id: 1 }, { name: 'category_id' }],
+  ['orders', { referenceCode: 1 }, { unique: true, name: 'referenceCode_unique' }],
+  ['orders', { 'payment.transactionId': 1 }, {
+    unique: true,
+    partialFilterExpression: { 'payment.transactionId': { $type: 'string' } },
+    name: 'payment_transactionId_unique',
+  }],
+  ['orders', { userId: 1 }, { name: 'userId' }],
+  ['orders', { holdExpiresAt: 1 }, { name: 'holdExpiresAt' }],
+  ['reviews', { targetType: 1, targetId: 1, kind: 1, status: 1, _id: -1 }, { name: 'target_kind_status' }],
+  // One star review per user per item; comments are unlimited.
+  ['reviews', { targetType: 1, targetId: 1, userId: 1 }, {
+    unique: true,
+    partialFilterExpression: { kind: 'review' },
+    name: 'one_review_per_user',
+  }],
+  ['reviews', { kind: 1, createdAt: -1 }, { name: 'kind_createdAt' }],
 ];
 
 // Creating an index that already exists is a no-op. A failure (most likely
@@ -75,6 +95,12 @@ async function connectDB() {
     AttractionCollection:    db.collection('attractions'),
     BookingCollection:       db.collection('bookings'),
     PaymentMethodCollection: db.collection('paymentmethods'),
+    SocialCollection:        db.collection('socials'),
+    CouponCollection:        db.collection('coupons'),
+    ProductCategoryCollection: db.collection('productcategories'),
+    ProductCollection:       db.collection('products'),
+    OrderCollection:         db.collection('orders'),
+    ReviewCollection:        db.collection('reviews'),
   };
 }
 

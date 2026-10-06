@@ -1,7 +1,8 @@
 const { ObjectId } = require('mongodb');
-const { generateUniqueReferenceCode } = require('../utils/refCode');
+const { generateUniqueReferenceCode, refOrIdFilter } = require('../utils/refCode');
 const { BD_PHONE } = require('../utils/contactValidation');
 const { sendList } = require('../utils/pagination');
+const { COUPON_CODE, normalizeCode, couponDiscount, couponProblem } = require('../utils/coupons');
 
 // Share of the total paid online to hold the booking; the rest is paid on arrival.
 const ADVANCE_RATE = 0.4;
@@ -82,7 +83,7 @@ const newHoldExpiry = (from = new Date()) => new Date(from.getTime() + HOLD_MINU
 const canView = (req, booking) => req.user.role === 'admin' || String(booking.userId) === String(req.user.userId);
 
 // Shared by the request handlers and the periodic sweep started in index.js.
-const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
+const createHoldHelpers = ({ BookingCollection, TravelPlanCollection, CouponCollection }) => {
   // Give seats back to the plan, reopening it if it had been marked full.
   const releaseSeats = async (planId, count) => {
     await TravelPlanCollection.updateOne(
@@ -93,6 +94,12 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
       { _id: planId, status: 'full', seats_available: { $gt: 0 } },
       { $set: { status: 'open' } }
     );
+  };
+
+  // Give back the coupon use a cancelled booking had taken.
+  const releaseCoupon = async (booking) => {
+    if (!booking.coupon?.couponId) return;
+    await CouponCollection.updateOne({ _id: booking.coupon.couponId, usedCount: { $gt: 0 } }, { $inc: { usedCount: -1 } });
   };
 
   // An unpaid (or payment-rejected) pending booking whose hold has run out.
@@ -116,6 +123,7 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
     );
     if (result.modifiedCount === 1) {
       await releaseSeats(booking.planId, booking.ticketCount);
+      await releaseCoupon(booking);
       return true;
     }
     return false;
@@ -126,7 +134,7 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
     const now = new Date().toISOString();
     const filter = expiredHoldFilter(now);
     if (planId) filter.planId = planId;
-    const expired = await BookingCollection.find(filter, { projection: { _id: 1, planId: 1, ticketCount: 1 } }).toArray();
+    const expired = await BookingCollection.find(filter, { projection: { _id: 1, planId: 1, ticketCount: 1, coupon: 1 } }).toArray();
     let count = 0;
     for (const booking of expired) {
       if (await expireHold(booking, now)) count++;
@@ -134,12 +142,12 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection }) => {
     return count;
   };
 
-  return { releaseSeats, expireHold, sweepExpiredHolds };
+  return { releaseSeats, releaseCoupon, expireHold, sweepExpiredHolds };
 };
 
 module.exports = (collections) => {
-  const { BookingCollection, TravelPlanCollection, PaymentMethodCollection } = collections;
-  const { releaseSeats, expireHold, sweepExpiredHolds } = createHoldHelpers(collections);
+  const { BookingCollection, TravelPlanCollection, PaymentMethodCollection, CouponCollection, OrderCollection } = collections;
+  const { releaseSeats, releaseCoupon, expireHold, sweepExpiredHolds } = createHoldHelpers(collections);
 
   return {
     sweepExpiredHolds,
@@ -187,6 +195,24 @@ module.exports = (collections) => {
         const limitError = await overLimit({ perPlan: MAX_UNPAID_PER_PLAN - 1, total: MAX_UNPAID_TOTAL - 1 });
         if (limitError) return res.status(409).json({ success: false, message: limitError });
 
+        // Optional coupon: checked here, its use reserved after the seats.
+        const subtotalAmount = plan.price * ticketCount;
+        let coupon = null;
+        let discountAmount = 0;
+        const couponCode = normalizeCode(req.body.couponCode);
+        if (couponCode) {
+          coupon = COUPON_CODE.test(couponCode) ? await CouponCollection.findOne({ code: couponCode }) : null;
+          const usesByUser = coupon ? await BookingCollection.countDocuments({
+            userId, 'coupon.couponId': coupon._id, bookingStatus: { $ne: 'cancelled' },
+          }) : 0;
+          const problem = couponProblem(coupon, { planId: plan._id, subtotal: subtotalAmount, usesByUser });
+          if (problem) return res.status(400).json({ success: false, message: problem });
+          discountAmount = couponDiscount(coupon, subtotalAmount);
+          if (discountAmount >= subtotalAmount) {
+            return res.status(400).json({ success: false, message: 'This coupon cannot be used for online booking; please contact us' });
+          }
+        }
+
         // Generated before any seats are reserved, so a failure here cannot leak seats.
         const referenceCode = await generateUniqueReferenceCode(BookingCollection);
 
@@ -208,7 +234,24 @@ module.exports = (collections) => {
           await TravelPlanCollection.updateOne({ _id: plan._id, seats_available: 0, status: OPEN_STATUS }, { $set: { status: 'full' } });
         }
 
-        const totalAmount = plan.price * ticketCount;
+        // Take one use of the coupon; the limit is enforced by the update itself.
+        if (coupon) {
+          const used = await CouponCollection.updateOne(
+            {
+              _id: coupon._id,
+              active: { $ne: false },
+              $or: [{ usageLimit: { $not: { $gt: 0 } } }, { $expr: { $lt: [{ $ifNull: ['$usedCount', 0] }, '$usageLimit'] } }],
+            },
+            { $inc: { usedCount: 1 } }
+          );
+          if (!used.modifiedCount) {
+            if (hasSeatLimit) await releaseSeats(plan._id, ticketCount);
+            return res.status(409).json({ success: false, message: 'This coupon has been fully used' });
+          }
+        }
+        const couponInfo = coupon ? { couponId: coupon._id, code: coupon.code, discount: discountAmount } : null;
+
+        const totalAmount = subtotalAmount - discountAmount;
         const advanceAmount = Math.ceil(totalAmount * ADVANCE_RATE);
         const createdAt = new Date();
         const now = createdAt.toISOString();
@@ -229,6 +272,9 @@ module.exports = (collections) => {
           travellers,
           note: String(note || '').trim().slice(0, 1000),
           pricePerPerson: plan.price,
+          subtotalAmount,
+          discountAmount,
+          coupon: couponInfo,
           totalAmount,
           advanceAmount,
           dueAmount: totalAmount,
@@ -246,6 +292,7 @@ module.exports = (collections) => {
           result = await BookingCollection.insertOne(booking);
         } catch (insertErr) {
           if (hasSeatLimit) await releaseSeats(plan._id, ticketCount);
+          await releaseCoupon(booking);
           throw insertErr;
         }
 
@@ -256,6 +303,7 @@ module.exports = (collections) => {
         if (raceError) {
           const removed = await BookingCollection.deleteOne({ _id: result.insertedId, paymentStatus: 'unpaid' });
           if (removed.deletedCount && hasSeatLimit) await releaseSeats(plan._id, ticketCount);
+          if (removed.deletedCount) await releaseCoupon(booking);
           if (removed.deletedCount) return res.status(409).json({ success: false, message: raceError });
         }
 
@@ -272,9 +320,10 @@ module.exports = (collections) => {
     },
 
     getBooking: async (req, res) => {
-      const id = toObjectId(req.params.id);
-      if (!id) return invalidId(res);
-      const booking = await BookingCollection.findOne({ _id: id });
+      // :id is the reference code (or, for older links, the database id).
+      const filter = refOrIdFilter(req.params.id, toObjectId);
+      if (!filter) return invalidId(res);
+      const booking = await BookingCollection.findOne(filter);
       if (!booking || !canView(req, booking)) {
         return res.status(404).json({ success: false, message: 'Booking not found' });
       }
@@ -292,11 +341,15 @@ module.exports = (collections) => {
 
         // Independent lookups run together (one round trip instead of three);
         // their results are still checked in the original order below.
-        const [booking, method, reused] = await Promise.all([
+        // A TrxID can pay for one booking or one shop order, never two.
+        const [booking, method, reused, reusedByOrder] = await Promise.all([
           BookingCollection.findOne({ _id: id }),
           methodId ? PaymentMethodCollection.findOne({ _id: methodId, active: { $ne: false } }) : null,
           TRX_ID.test(transactionId)
             ? BookingCollection.findOne({ 'payment.transactionId': transactionId, _id: { $ne: id } }, { projection: { _id: 1 } })
+            : null,
+          TRX_ID.test(transactionId) && OrderCollection
+            ? OrderCollection.findOne({ 'payment.transactionId': transactionId }, { projection: { _id: 1 } })
             : null,
         ]);
         if (!booking || String(booking.userId) !== String(req.user.userId)) {
@@ -322,7 +375,7 @@ module.exports = (collections) => {
         if (!TRX_ID.test(transactionId)) {
           return res.status(400).json({ success: false, message: 'Enter a valid transaction ID' });
         }
-        if (reused) {
+        if (reused || reusedByOrder) {
           return res.status(409).json({ success: false, message: 'This transaction ID has already been used' });
         }
 
@@ -461,7 +514,10 @@ module.exports = (collections) => {
           }
         );
         if (result.modifiedCount === 1) {
-          if (status === 'cancelled') await releaseSeats(booking.planId, booking.ticketCount);
+          if (status === 'cancelled') {
+            await releaseSeats(booking.planId, booking.ticketCount);
+            await releaseCoupon(booking);
+          }
         } else if (status !== 'cancelled') {
           // Cancelled between our read and the update.
           return reopenError();

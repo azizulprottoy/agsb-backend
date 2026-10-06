@@ -4,7 +4,6 @@ const buildDivisionData = (body) => ({
   name_bn: body.name_bn,
   name_en: body.name_en,
   slug: body.slug,
-  color: body.color || '#4CAF50',
   districtCount: Number(body.districtCount) || 0,
 });
 
