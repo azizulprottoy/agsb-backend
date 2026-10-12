@@ -43,6 +43,8 @@ const socialRoutes = require('./src/routes/socialRoutes');
 const couponRoutes = require('./src/routes/couponRoutes');
 const productRoutes = require('./src/routes/productRoutes');
 const orderRoutes = require('./src/routes/orderRoutes');
+const analyticsRoutes = require('./src/routes/analyticsRoutes');
+const createEventTracking = require('./src/analytics/tracker');
 const { createHoldHelpers } = require('./src/controllers/bookingController');
 const { createOrderHoldHelpers } = require('./src/controllers/orderController');
 const { initAuth } = require('./src/middleware/auth');
@@ -90,6 +92,9 @@ async function run() {
       },
     }));
 
+    // CC Events: one analytics event per /api request (see src/analytics).
+    app.use(createEventTracking(collections).eventTracking);
+
     app.use('/api', authRoutes(collections));
     app.use('/api', profileRoutes(collections));
     app.use('/api', userRoutes(collections));
@@ -116,6 +121,7 @@ async function run() {
     app.use('/api', productRoutes(collections));
     app.use('/api', orderRoutes(collections));
     app.use('/api', reviewRoutes(collections));
+    app.use('/api', analyticsRoutes());
 
     // Release seats held by unpaid bookings whose hold has expired. createBooking
     // also sweeps its own plan, so this only keeps seat counts fresh in between.

@@ -1,4 +1,5 @@
 const { ObjectId } = require('mongodb');
+const { bookingHoldExpired } = require('../analytics/holdEvents');
 const { generateUniqueReferenceCode, refOrIdFilter } = require('../utils/refCode');
 const { BD_PHONE } = require('../utils/contactValidation');
 const { sendList } = require('../utils/pagination');
@@ -134,10 +135,15 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection, CouponColl
     const now = new Date().toISOString();
     const filter = expiredHoldFilter(now);
     if (planId) filter.planId = planId;
-    const expired = await BookingCollection.find(filter, { projection: { _id: 1, planId: 1, ticketCount: 1, coupon: 1 } }).toArray();
+    const expired = await BookingCollection.find(filter, {
+      projection: { _id: 1, planId: 1, ticketCount: 1, coupon: 1, userId: 1, referenceCode: 1, planTitle_en: 1, planSlug: 1, totalAmount: 1 },
+    }).toArray();
     let count = 0;
     for (const booking of expired) {
-      if (await expireHold(booking, now)) count++;
+      if (await expireHold(booking, now)) {
+        count++;
+        bookingHoldExpired(booking);
+      }
     }
     return count;
   };

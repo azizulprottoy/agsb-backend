@@ -1,4 +1,5 @@
 const { ObjectId } = require('mongodb');
+const { orderHoldExpired } = require('../analytics/holdEvents');
 const { generateUniqueReferenceCode, refOrIdFilter } = require('../utils/refCode');
 const { BD_PHONE } = require('../utils/contactValidation');
 const { sendList } = require('../utils/pagination');
@@ -78,9 +79,16 @@ const createOrderHoldHelpers = ({ OrderCollection, ProductCollection }) => {
 
   const sweepExpiredOrderHolds = async () => {
     const now = new Date().toISOString();
-    const expired = await OrderCollection.find(expiredHoldFilter(now), { projection: { _id: 1, items: 1 } }).toArray();
+    const expired = await OrderCollection.find(expiredHoldFilter(now), {
+      projection: { _id: 1, items: 1, userId: 1, referenceCode: 1, totalAmount: 1 },
+    }).toArray();
     let n = 0;
-    for (const order of expired) if (await expireHold(order, now)) n++;
+    for (const order of expired) {
+      if (await expireHold(order, now)) {
+        n++;
+        orderHoldExpired(order);
+      }
+    }
     return n;
   };
 
