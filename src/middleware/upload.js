@@ -2,20 +2,16 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { toWebp } = require('../utils/webp');
 
 const rootDir = path.join(__dirname, '..', '..');
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-// Only raster images. The saved extension comes from the MIME type, never from
-// the client's filename, so nothing can be stored as .html/.svg and later be
-// served as an active document.
-const EXTENSION_FOR_TYPE = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-};
+// Only raster images are accepted, and every one is re-encoded to WebP before
+// it is stored, so nothing can be stored as .html/.svg and later be served as
+// an active document.
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 
 const ensureDir = (dirPath) => {
@@ -24,13 +20,11 @@ const ensureDir = (dirPath) => {
   }
 };
 
-const filename = (req, file, cb) => {
-  cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${EXTENSION_FOR_TYPE[file.mimetype]}`);
-};
+const webpName = () => `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.webp`;
 
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname || '').toLowerCase();
-  if (!EXTENSION_FOR_TYPE[file.mimetype] || !ALLOWED_EXTENSIONS.includes(ext)) {
+  if (!ALLOWED_TYPES.includes(file.mimetype) || !ALLOWED_EXTENSIONS.includes(ext)) {
     const err = new Error('Only JPEG, PNG, WebP or GIF images are allowed');
     err.status = 400;
     return cb(err);
@@ -38,17 +32,52 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-const uploaderFor = (dirPath, maxFiles = 1) => multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      ensureDir(dirPath);
-      cb(null, dirPath);
-    },
-    filename,
-  }),
-  fileFilter,
-  limits: { fileSize: MAX_FILE_SIZE, files: maxFiles },
-});
+// Writes each in-memory upload to dirPath as WebP and fills in the fields a
+// disk-stored multer file has (filename, path, ...), so controllers and the
+// failed-request cleanup in index.js work unchanged.
+const storeAsWebp = (dirPath) => async (req, res, next) => {
+  const files = [req.file, ...(Array.isArray(req.files) ? req.files : [])].filter(Boolean);
+  const written = [];
+  try {
+    ensureDir(dirPath);
+    for (const file of files) {
+      const filename = webpName();
+      const filePath = path.join(dirPath, filename);
+      const info = await toWebp(file.buffer, filePath);
+      written.push(filePath);
+      Object.assign(file, {
+        destination: dirPath,
+        filename,
+        path: filePath,
+        mimetype: 'image/webp',
+        size: info.size,
+        buffer: undefined,
+      });
+    }
+    next();
+  } catch (err) {
+    for (const p of written) fs.unlink(p, () => {});
+    const badImage = new Error('The uploaded file is not a valid image');
+    badImage.status = 400;
+    console.error('Image conversion failed:', err.message);
+    next(badImage);
+  }
+};
+
+// Same .single()/.array() API as multer; each returns [parse, convert] which
+// Express accepts anywhere a middleware is expected.
+const uploaderFor = (dirPath, maxFiles = 1) => {
+  const parser = multer({
+    storage: multer.memoryStorage(),
+    fileFilter,
+    limits: { fileSize: MAX_FILE_SIZE, files: maxFiles },
+  });
+  const convert = storeAsWebp(dirPath);
+  return {
+    single: (field) => [parser.single(field), convert],
+    array: (field, max) => [parser.array(field, max), convert],
+  };
+};
 
 const fixedUploader = (...subdirs) => uploaderFor(path.join(rootDir, 'uploads', ...subdirs));
 

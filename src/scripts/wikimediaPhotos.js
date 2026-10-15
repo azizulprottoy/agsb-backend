@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const sharp = require('sharp');
+const { WEBP_OPTIONS } = require('../utils/webp');
 
 const USER_AGENT = "AGSB-images/1.0 (Bangladesh travel site; one-off import of freely licensed photos)";
 const WIDTH = 1600;
@@ -86,17 +87,17 @@ const commonsInfo = async (fileNames) => {
   return found;
 };
 
-// Downloads a photo into outDir as <prefix>-<random>.jpg, resized to WIDTH.
+// Downloads a photo into outDir as <prefix>-<random>.webp, resized to WIDTH.
 // Returns the file name, or null when the download fails.
 const savePhoto = async (photo, outDir, prefix) => {
   const res = await fetch(photo.thumbUrl, { headers: { 'User-Agent': USER_AGENT } });
   if (!res.ok) return null;
   fs.mkdirSync(outDir, { recursive: true });
-  const fileName = `${prefix}-${crypto.randomBytes(4).toString('hex')}.jpg`;
+  const fileName = `${prefix}-${crypto.randomBytes(4).toString('hex')}.webp`;
   await sharp(Buffer.from(await res.arrayBuffer()))
     .rotate()
     .resize({ width: WIDTH, withoutEnlargement: true })
-    .jpeg({ quality: 80, mozjpeg: true })
+    .webp(WEBP_OPTIONS)
     .toFile(path.join(outDir, fileName));
   return fileName;
 };

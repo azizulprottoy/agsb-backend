@@ -27,7 +27,9 @@
     "seed:products": "node src/scripts/seedProducts.js",
     "seed:products:stage": "node -r dotenv/config src/scripts/seedProducts.js dotenv_config_path=.env.stage",
     "seed:payment-methods": "node src/scripts/seedPaymentMethods.js",
-    "seed:payment-methods:stage": "node -r dotenv/config src/scripts/seedPaymentMethods.js dotenv_config_path=.env.stage"
+    "seed:payment-methods:stage": "node -r dotenv/config src/scripts/seedPaymentMethods.js dotenv_config_path=.env.stage",
+    "migrate:webp": "node src/scripts/convertUploadsToWebp.js",
+    "migrate:webp:stage": "node -r dotenv/config src/scripts/convertUploadsToWebp.js dotenv_config_path=.env.stage"
   },
   "author": "",
   "license": "ISC",
