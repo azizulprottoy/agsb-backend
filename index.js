@@ -1,4 +1,6 @@
 require('dotenv').config();
+// Mailbox passwords and the CC Events webhook secret (see .env.mail.example).
+require('dotenv').config({ path: require('path').join(__dirname, '.env.mail'), quiet: true });
 // Fail fast on missing/weak config before any module reads it.
 require('./src/utils/configCheck').assertConfig();
 
@@ -44,6 +46,12 @@ const couponRoutes = require('./src/routes/couponRoutes');
 const productRoutes = require('./src/routes/productRoutes');
 const orderRoutes = require('./src/routes/orderRoutes');
 const analyticsRoutes = require('./src/routes/analyticsRoutes');
+const notificationRoutes = require('./src/routes/notificationRoutes');
+const mailRoutes = require('./src/routes/mailRoutes');
+const eventsDeliveryRoutes = require('./src/routes/eventsDeliveryRoutes');
+const { initMail } = require('./src/services/mail');
+const { initPush } = require('./src/services/push');
+const { initNotifications } = require('./src/services/notifications');
 const createEventTracking = require('./src/analytics/tracker');
 const { createHoldHelpers } = require('./src/controllers/bookingController');
 const { createOrderHoldHelpers } = require('./src/controllers/orderController');
@@ -60,7 +68,14 @@ const SHUTDOWN_TIMEOUT_MS = 10 * 1000;
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ origin: CORS_ORIGINS }));
 
-app.use(express.json());
+// Admin compose may carry inline images; everything else keeps the default limit.
+app.use('/api/mail/send', express.json({ limit: '15mb' }));
+app.use(express.json({
+  // The CC Events webhook signs the exact bytes it sent.
+  verify: (req, res, buf) => {
+    if (req.originalUrl.startsWith('/api/events/deliver')) req.rawBody = buf;
+  },
+}));
 
 // Any failed request (4xx/5xx, thrown or returned directly) must not leave the
 // file multer stored for it behind in uploads/.
@@ -82,6 +97,9 @@ async function run() {
   try {
     const collections = await connectDB();
     initAuth(collections);
+    initMail(collections);
+    initPush(collections);
+    initNotifications(collections);
 
     // Uploaded files are user-supplied: never let a browser sniff them into
     // HTML/script, and never let one run as a page on the API origin.
@@ -122,6 +140,9 @@ async function run() {
     app.use('/api', orderRoutes(collections));
     app.use('/api', reviewRoutes(collections));
     app.use('/api', analyticsRoutes());
+    app.use('/api', notificationRoutes());
+    app.use('/api', mailRoutes());
+    app.use('/api', eventsDeliveryRoutes(collections));
 
     // Release seats held by unpaid bookings whose hold has expired. createBooking
     // also sweeps its own plan, so this only keeps seat counts fresh in between.
@@ -166,11 +187,11 @@ async function run() {
       }
       if (status < 400 || status > 599) status = 500;
 
-      if (status >= 500) console.error(`${req.method} ${req.originalUrl}`, err);
+      if (status >= 500 && !err.expose) console.error(`${req.method} ${req.originalUrl}`, err);
       if (res.headersSent) return;
       res.status(status).json({
         success: false,
-        message: status >= 500 ? 'Internal server error' : message,
+        message: status >= 500 && !err.expose ? 'Internal server error' : message,
       });
     });
 

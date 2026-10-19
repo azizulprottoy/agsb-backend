@@ -1,5 +1,9 @@
 node_modules
 
+# Mailbox passwords and Firebase service-account keys
+*firebase-adminsdk*.json
+firebase-service-account*.json
+
 
 !uploads/.gitkeep
 

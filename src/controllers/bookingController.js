@@ -1,5 +1,6 @@
 const { ObjectId } = require('mongodb');
 const { bookingHoldExpired } = require('../analytics/holdEvents');
+const notices = require('../services/bookingNotices');
 const { generateUniqueReferenceCode, refOrIdFilter } = require('../utils/refCode');
 const { BD_PHONE } = require('../utils/contactValidation');
 const { sendList } = require('../utils/pagination');
@@ -136,13 +137,17 @@ const createHoldHelpers = ({ BookingCollection, TravelPlanCollection, CouponColl
     const filter = expiredHoldFilter(now);
     if (planId) filter.planId = planId;
     const expired = await BookingCollection.find(filter, {
-      projection: { _id: 1, planId: 1, ticketCount: 1, coupon: 1, userId: 1, referenceCode: 1, planTitle_en: 1, planSlug: 1, totalAmount: 1 },
+      projection: {
+        _id: 1, planId: 1, ticketCount: 1, coupon: 1, userId: 1, userName: 1, userEmail: 1, referenceCode: 1,
+        planTitle_en: 1, planTitle_bn: 1, planSlug: 1, start_date: 1, end_date: 1, totalAmount: 1,
+      },
     }).toArray();
     let count = 0;
     for (const booking of expired) {
       if (await expireHold(booking, now)) {
         count++;
         bookingHoldExpired(booking);
+        notices.holdExpired(booking);
       }
     }
     return count;
@@ -313,6 +318,8 @@ module.exports = (collections) => {
           if (removed.deletedCount) return res.status(409).json({ success: false, message: raceError });
         }
 
+        notices.bookingCreated({ ...booking, _id: result.insertedId });
+
         res.status(201).json({ success: true, bookingId: result.insertedId, referenceCode: booking.referenceCode, holdExpiresAt });
       } catch (err) {
         console.error('Create booking error:', err);
@@ -418,6 +425,7 @@ module.exports = (collections) => {
           }
           return res.status(409).json({ success: false, message: 'Payment has already been submitted for this booking' });
         }
+        notices.paymentSubmitted({ ...booking, payment, paymentStatus: 'pending_verification' });
         res.json({ success: true, message: 'Payment submitted for verification' });
       } catch (err) {
         console.error('Submit payment error:', err);
@@ -487,7 +495,9 @@ module.exports = (collections) => {
         if (!result.matchedCount) {
           return res.status(409).json({ success: false, message: 'This booking changed while you were editing it. Reload and try again.' });
         }
-        res.json({ success: true, booking: await BookingCollection.findOne({ _id: id }) });
+        const updated = await BookingCollection.findOne({ _id: id });
+        if (updated) notices.paymentStatusChanged(updated, booking);
+        res.json({ success: true, booking: updated });
       } catch (err) {
         console.error('Update payment status error:', err);
         res.status(500).json({ success: false, message: 'Error updating payment status' });
@@ -529,7 +539,9 @@ module.exports = (collections) => {
           return reopenError();
         }
         // Cancelling an already-cancelled booking is an idempotent no-op.
-        res.json({ success: true, booking: await BookingCollection.findOne({ _id: id }) });
+        const updated = await BookingCollection.findOne({ _id: id });
+        if (updated && result.modifiedCount === 1) notices.bookingStatusChanged(updated, booking.bookingStatus);
+        res.json({ success: true, booking: updated });
       } catch (err) {
         console.error('Update booking status error:', err);
         res.status(500).json({ success: false, message: 'Error updating booking status' });

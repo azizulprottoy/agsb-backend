@@ -52,6 +52,20 @@ const INDEXES = [
     name: 'one_review_per_user',
   }],
   ['reviews', { kind: 1, createdAt: -1 }, { name: 'kind_createdAt' }],
+  ['notifications', { userId: 1, createdAt: -1 }, { name: 'userId_createdAt' }],
+  ['devicetokens', { token: 1 }, { unique: true, name: 'token_unique' }],
+  ['devicetokens', { userId: 1 }, { name: 'userId' }],
+  ['emaillogs', { type: 1, mailbox: 1, date: -1 }, { name: 'type_mailbox_date' }],
+  // Inbox rows are upserted from IMAP by (mailbox, uid).
+  ['emaillogs', { mailbox: 1, uid: 1 }, {
+    unique: true,
+    partialFilterExpression: { type: 'inbox' },
+    name: 'inbox_mailbox_uid_unique',
+  }],
+  ['passwordresets', { tokenHash: 1 }, { unique: true, name: 'tokenHash_unique' }],
+  ['passwordresets', { userId: 1 }, { name: 'userId' }],
+  // MongoDB deletes reset tokens once they expire.
+  ['passwordresets', { expiresAt: 1 }, { expireAfterSeconds: 0, name: 'expiresAt_ttl' }],
 ];
 
 // Creating an index that already exists is a no-op. A failure (most likely
@@ -101,6 +115,10 @@ async function connectDB() {
     ProductCollection:       db.collection('products'),
     OrderCollection:         db.collection('orders'),
     ReviewCollection:        db.collection('reviews'),
+    NotificationCollection:  db.collection('notifications'),
+    DeviceTokenCollection:   db.collection('devicetokens'),
+    EmailLogCollection:      db.collection('emaillogs'),
+    PasswordResetCollection: db.collection('passwordresets'),
   };
 }
 
