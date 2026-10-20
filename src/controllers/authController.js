@@ -7,12 +7,27 @@ const {
   validateName, validateEmail, validateNewPassword, validateOptionalPhone, validateOptionalDistrict,
 } = require('../utils/authValidation');
 const { sendMailQuietly } = require('../services/mail');
-const { welcomeEmail, passwordResetEmail, passwordChangedEmail } = require('../services/emailTemplates');
+const { welcomeEmail, passwordResetCodeEmail, passwordChangedEmail } = require('../services/emailTemplates');
 
-// Password reset links work once, for this long.
-const RESET_TOKEN_MINUTES = 30;
-const RESET_LINK_SENT = 'If an account exists for that email, we sent a link to reset the password.';
+// Forgot password: a 6-digit code is emailed (valid RESET_CODE_MINUTES,
+// MAX_CODE_ATTEMPTS guesses), and a correct code is traded for a reset token
+// (valid RESET_TOKEN_MINUTES) that sets the new password. Both are single use.
+const RESET_CODE_MINUTES = 10;
+const RESET_TOKEN_MINUTES = 15;
+const RESEND_AFTER_SECONDS = 60;
+const MAX_CODE_ATTEMPTS = 5;
+const RESET_CODE_SENT = 'We sent a 6-digit code to your email.';
+const NO_ACCOUNT = 'No account found with this email';
+const INVALID_CODE = 'The code is wrong or has expired';
+const RESET_EXPIRED = 'Your reset session has expired. Please request a new code.';
 const hashResetToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+// Keyed with the server secret: a 6-digit code has too few values for a plain hash.
+const hashResetCode = (userId, code) => crypto.createHmac('sha256', JWT_SECRET).update(`${userId}:${code}`).digest('hex');
+const safeEqualHex = (a, b) => {
+  const x = Buffer.from(String(a), 'hex');
+  const y = Buffer.from(String(b), 'hex');
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
 
 const sendAccountEmail = (user, email) => {
   if (user?.email) sendMailQuietly({ from: 'no-reply', to: user.email, ...email });
@@ -53,7 +68,7 @@ const publicUser = (user) => ({
   visitedDistricts: user.visitedDistricts || [],
 });
 
-module.exports = ({ AdminCollection, UserCollection, PasswordResetCollection }) => ({
+module.exports = ({ AdminCollection, UserCollection, PasswordResetCollection, PasswordResetCodeCollection }) => ({
   adminLogin: async (req, res) => {
     const creds = readCredentials(req.body);
     if (!creds) {
@@ -216,50 +231,104 @@ module.exports = ({ AdminCollection, UserCollection, PasswordResetCollection }) 
     res.json({ success: true, message: 'Password changed', token: signToken(updated, 'user') });
   },
 
-  // Emails a one-time reset link. Always answers the same way, and sends the
-  // email in the background, so the response never reveals whether the
-  // address has an account. Body: { email }
+  // Step 1: emails a 6-digit code (in the background). Says so when no account
+  // uses the email; signup reveals that anyway, and this route is rate limited.
+  // Body: { email }
   forgotPassword: async (req, res) => {
     const checked = validateEmail(req.body?.email);
     if (checked.error) return res.status(400).json({ success: false, message: checked.error });
+    const answer = () => res.json({
+      success: true, message: RESET_CODE_SENT, resendAfterSeconds: RESEND_AFTER_SECONDS, codeMinutes: RESET_CODE_MINUTES,
+    });
 
     const user = await UserCollection.findOne(
       { email: checked.value },
       { collation: EMAIL_COLLATION, projection: { name: 1, email: 1 } }
     );
-    if (user) {
-      const token = crypto.randomBytes(32).toString('hex');
-      const now = new Date();
-      // Only the newest link works.
-      await PasswordResetCollection.deleteMany({ userId: user._id });
-      await PasswordResetCollection.insertOne({
-        userId: user._id,
-        tokenHash: hashResetToken(token),
-        createdAt: now,
-        expiresAt: new Date(now.getTime() + RESET_TOKEN_MINUTES * 60 * 1000),
-      });
-      sendAccountEmail(user, passwordResetEmail(user, `/reset-password?token=${token}`, RESET_TOKEN_MINUTES));
-    }
-    res.json({ success: true, message: RESET_LINK_SENT });
+    if (!user) return res.status(404).json({ success: false, message: NO_ACCOUNT });
+
+    // One live code per user; a new request replaces it, but not more often
+    // than every RESEND_AFTER_SECONDS (silently, so mailboxes can't be flooded).
+    const now = new Date();
+    const existing = await PasswordResetCodeCollection.findOne({ userId: user._id });
+    if (existing && now - existing.createdAt < RESEND_AFTER_SECONDS * 1000) return answer();
+
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    await PasswordResetCodeCollection.updateOne(
+      { userId: user._id },
+      {
+        $set: {
+          codeHash: hashResetCode(user._id, code),
+          attempts: 0,
+          createdAt: now,
+          expiresAt: new Date(now.getTime() + RESET_CODE_MINUTES * 60 * 1000),
+        },
+      },
+      { upsert: true }
+    );
+    sendAccountEmail(user, passwordResetCodeEmail(user, code, RESET_CODE_MINUTES));
+    answer();
   },
 
-  // Sets a new password from a reset link and signs out every session.
-  // Body: { token, newPassword }. The user signs in again afterwards.
-  resetPassword: async (req, res) => {
-    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
-    const next = validateNewPassword(req.body?.newPassword);
-    if (!/^[a-f0-9]{64}$/.test(token)) {
-      return res.status(400).json({ success: false, message: 'This reset link is invalid or has expired' });
+  // Step 2: checks the code and trades it for a short-lived reset token.
+  // Body: { email, code } -> { resetToken, expiresInMinutes }
+  verifyResetCode: async (req, res) => {
+    const checked = validateEmail(req.body?.email);
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (checked.error || !/^\d{6}$/.test(code)) return res.status(400).json({ success: false, message: INVALID_CODE });
+
+    const user = await UserCollection.findOne({ email: checked.value }, { collation: EMAIL_COLLATION, projection: { _id: 1 } });
+    if (!user) return res.status(400).json({ success: false, message: INVALID_CODE });
+
+    // Count the attempt before comparing, atomically, so parallel guesses
+    // can't get past the limit.
+    const entry = await PasswordResetCodeCollection.findOneAndUpdate(
+      { userId: user._id, expiresAt: { $gt: new Date() }, attempts: { $lt: MAX_CODE_ATTEMPTS } },
+      { $inc: { attempts: 1 } },
+      { returnDocument: 'after' }
+    );
+    if (!entry) return res.status(400).json({ success: false, message: INVALID_CODE });
+
+    if (!safeEqualHex(entry.codeHash, hashResetCode(user._id, code))) {
+      if (entry.attempts >= MAX_CODE_ATTEMPTS) {
+        await PasswordResetCodeCollection.deleteOne({ _id: entry._id });
+        return res.status(400).json({ success: false, message: 'Too many wrong codes. Request a new code.' });
+      }
+      return res.status(400).json({ success: false, message: INVALID_CODE });
     }
+
+    // Single use: only the request that deletes the code gets a token.
+    const used = await PasswordResetCodeCollection.deleteOne({ _id: entry._id, codeHash: entry.codeHash });
+    if (!used.deletedCount) return res.status(400).json({ success: false, message: INVALID_CODE });
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const now = new Date();
+    await PasswordResetCollection.deleteMany({ userId: user._id });
+    await PasswordResetCollection.insertOne({
+      userId: user._id,
+      tokenHash: hashResetToken(resetToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + RESET_TOKEN_MINUTES * 60 * 1000),
+    });
+    res.json({ success: true, resetToken, expiresInMinutes: RESET_TOKEN_MINUTES });
+  },
+
+  // Step 3: sets the new password and signs out every session.
+  // Body: { resetToken, newPassword }. The user signs in again afterwards.
+  resetPassword: async (req, res) => {
+    const raw = req.body?.resetToken ?? req.body?.token;
+    const token = typeof raw === 'string' ? raw.trim() : '';
+    const next = validateNewPassword(req.body?.newPassword);
+    if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ success: false, message: RESET_EXPIRED });
     if (next.error) return res.status(400).json({ success: false, message: next.error });
 
-    // Deleting the token as it is read makes the link single-use, even when
-    // it is submitted twice at once.
+    // Deleting the token as it is read makes it single-use, even when it is
+    // submitted twice at once.
     const reset = await PasswordResetCollection.findOneAndDelete({
       tokenHash: hashResetToken(token),
       expiresAt: { $gt: new Date() },
     });
-    if (!reset) return res.status(400).json({ success: false, message: 'This reset link is invalid or has expired' });
+    if (!reset) return res.status(400).json({ success: false, message: RESET_EXPIRED });
 
     const passwordHash = await bcrypt.hash(next.value, 10);
     const updated = await UserCollection.findOneAndUpdate(
@@ -267,8 +336,11 @@ module.exports = ({ AdminCollection, UserCollection, PasswordResetCollection }) 
       { $set: { passwordHash }, $inc: { tokenVersion: 1 } },
       { returnDocument: 'after', projection: { name: 1, email: 1 } }
     );
-    if (!updated) return res.status(400).json({ success: false, message: 'This reset link is invalid or has expired' });
-    await PasswordResetCollection.deleteMany({ userId: reset.userId });
+    if (!updated) return res.status(400).json({ success: false, message: RESET_EXPIRED });
+    await Promise.all([
+      PasswordResetCollection.deleteMany({ userId: reset.userId }),
+      PasswordResetCodeCollection.deleteMany({ userId: reset.userId }),
+    ]);
 
     sendAccountEmail(updated, passwordChangedEmail(updated));
     res.json({ success: true, message: 'Password reset. Sign in with your new password.' });

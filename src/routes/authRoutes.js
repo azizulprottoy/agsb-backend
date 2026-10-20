@@ -11,6 +11,7 @@ const loginLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too 
 const changePasswordLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please try again later.', skipSuccessful: true });
 // Counts every request (a success says nothing about who asked), keyed by IP.
 const forgotPasswordLimit = rateLimit({ max: 5, windowMs: 60 * 60 * 1000, message: 'Too many reset requests. Please try again later.' });
+const verifyResetCodeLimit = rateLimit({ max: 20, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please try again later.', skipSuccessful: true });
 const resetPasswordLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please try again later.', skipSuccessful: true });
 const signupLimit = rateLimit({ max: 5, windowMs: 60 * 60 * 1000, message: 'Too many signup attempts. Please try again later.' });
 
@@ -25,6 +26,7 @@ module.exports = (collections) => {
   router.post('/auth/logout-all', verifyToken, ctrl.logoutAll);
   router.post('/auth/change-password', verifyToken, changePasswordLimit, ctrl.changePassword);
   router.post('/auth/forgot-password', forgotPasswordLimit, ctrl.forgotPassword);
+  router.post('/auth/verify-reset-code', verifyResetCodeLimit, ctrl.verifyResetCode);
   router.post('/auth/reset-password', resetPasswordLimit, ctrl.resetPassword);
 
   return router;

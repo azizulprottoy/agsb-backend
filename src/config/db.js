@@ -62,6 +62,9 @@ const INDEXES = [
     partialFilterExpression: { type: 'inbox' },
     name: 'inbox_mailbox_uid_unique',
   }],
+  // One live forgot-password code per user; MongoDB deletes it once expired.
+  ['passwordresetcodes', { userId: 1 }, { unique: true, name: 'userId_unique' }],
+  ['passwordresetcodes', { expiresAt: 1 }, { expireAfterSeconds: 0, name: 'expiresAt_ttl' }],
   ['passwordresets', { tokenHash: 1 }, { unique: true, name: 'tokenHash_unique' }],
   ['passwordresets', { userId: 1 }, { name: 'userId' }],
   // MongoDB deletes reset tokens once they expire.
@@ -119,6 +122,7 @@ async function connectDB() {
     DeviceTokenCollection:   db.collection('devicetokens'),
     EmailLogCollection:      db.collection('emaillogs'),
     PasswordResetCollection: db.collection('passwordresets'),
+    PasswordResetCodeCollection: db.collection('passwordresetcodes'),
   };
 }
 

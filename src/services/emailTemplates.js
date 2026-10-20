@@ -18,11 +18,12 @@ const taka = (amount) => `৳${Number(amount || 0).toLocaleString('en-US')}`;
  * @param {string} [email.greeting]  e.g. "Hi Rahim,"
  * @param {string[]} email.paragraphs
  * @param {Array<[string, string]>} [email.details]  label/value rows (booking summary)
+ * @param {string} [email.code]    one-time code shown large
  * @param {{label: string, url: string}} [email.button]
  * @param {string} [email.footnote]  small print under the button
  * @returns {{ html: string, text: string }}
  */
-const renderEmail = ({ heading, greeting, paragraphs = [], details = [], button, footnote }) => {
+const renderEmail = ({ heading, greeting, paragraphs = [], details = [], code, button, footnote }) => {
   const p = (text) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#1f2937">${escapeHtml(text)}</p>`;
   const rows = details.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([label, value]) => `
           <tr>
@@ -42,6 +43,7 @@ const renderEmail = ({ heading, greeting, paragraphs = [], details = [], button,
           ${greeting ? p(greeting) : ''}
           ${paragraphs.map(p).join('')}
           ${rows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 18px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb">${rows}</table>` : ''}
+          ${code ? `<p style="margin:4px 0 22px;text-align:center"><span style="display:inline-block;padding:14px 22px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;font-size:32px;font-weight:700;letter-spacing:10px;color:#111827;font-family:Menlo,Consolas,monospace">${escapeHtml(code)}</span></p>` : ''}
           ${button ? `<p style="margin:8px 0 22px"><a href="${escapeHtml(buttonUrl)}" style="display:inline-block;padding:12px 22px;background:${ACCENT};color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">${escapeHtml(button.label)}</a></p>` : ''}
           ${footnote ? `<p style="margin:0 0 18px;font-size:13px;line-height:1.5;color:#6b7280">${escapeHtml(footnote)}</p>` : ''}
         </td></tr>
@@ -60,6 +62,7 @@ const renderEmail = ({ heading, greeting, paragraphs = [], details = [], button,
     ...paragraphs.flatMap((t) => [t, '']),
     ...details.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([l, v]) => `${l}: ${v}`),
     ...(details.length ? [''] : []),
+    ...(code ? [`Your code: ${code}`, ''] : []),
     ...(button ? [`${button.label}: ${buttonUrl}`, ''] : []),
     ...(footnote ? [footnote, ''] : []),
     `— ${BRAND}`,
@@ -82,14 +85,14 @@ const welcomeEmail = (user) => ({
   }),
 });
 
-const passwordResetEmail = (user, resetUrl, minutes) => ({
-  subject: 'Reset your password',
+const passwordResetCodeEmail = (user, code, minutes) => ({
+  subject: `${code} is your password reset code`,
   ...renderEmail({
     heading: 'Reset your password',
     greeting: greet(user.name),
-    paragraphs: ['We received a request to reset the password for your account. Use the button below to choose a new one.'],
-    button: { label: 'Reset password', url: resetUrl },
-    footnote: `This link works once and expires in ${minutes} minutes. If you didn't ask for it, ignore this email; your password stays the same.`,
+    paragraphs: ['We received a request to reset the password for your account. Enter this code to continue:'],
+    code,
+    footnote: `The code expires in ${minutes} minutes and works once. Never share it with anyone; we will never ask for it. If you didn't ask to reset your password, ignore this email and your password stays the same.`,
   }),
 });
 
@@ -106,4 +109,4 @@ const passwordChangedEmail = (user) => ({
   }),
 });
 
-module.exports = { renderEmail, escapeHtml, taka, greet, welcomeEmail, passwordResetEmail, passwordChangedEmail };
+module.exports = { renderEmail, escapeHtml, taka, greet, welcomeEmail, passwordResetCodeEmail, passwordChangedEmail };
