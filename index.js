@@ -7,6 +7,7 @@ require('./src/utils/configCheck').assertConfig();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const app = express();
@@ -66,6 +67,9 @@ const SHUTDOWN_TIMEOUT_MS = 10 * 1000;
 // uploads set their own CSP below; the frontends live on other origins, so
 // they must be allowed to load images from here.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// gzip JSON responses: list endpoints like /api/attractions are 50–150 KB raw,
+// which slows page loads on mobile data.
+app.use(compression());
 app.use(cors({ origin: CORS_ORIGINS }));
 
 // Admin compose may carry inline images; everything else keeps the default limit.
