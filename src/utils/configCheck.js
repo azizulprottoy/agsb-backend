@@ -31,7 +31,7 @@ const assertConfig = (env = process.env) => {
   if (errors.length) {
     console.error('FATAL: invalid configuration:');
     errors.forEach((e) => console.error(`  - ${e}`));
-    console.error('Set these in the environment or .env (see .env.example).');
+    console.error('Set these in the environment or .env.');
     process.exit(1);
   }
 };

@@ -1,6 +1,4 @@
 require('dotenv').config();
-// Mailbox passwords and the CC Events webhook secret (see .env.mail.example).
-require('dotenv').config({ path: require('path').join(__dirname, '.env.mail'), quiet: true });
 // Fail fast on missing/weak config before any module reads it.
 require('./src/utils/configCheck').assertConfig();
 

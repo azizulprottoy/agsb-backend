@@ -2,7 +2,7 @@
 // Sends over SMTP (nodemailer), pulls inboxes over IMAP for the admin panel,
 // and logs every sent and synced email in the `emaillogs` collection.
 //
-// Passwords live only in env (.env.mail, see .env.mail.example). A mailbox
+// Passwords live only in env (.env). A mailbox
 // without a password is reported as unconfigured and refuses to send.
 
 const nodemailer = require('nodemailer');
